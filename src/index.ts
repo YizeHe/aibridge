@@ -2,8 +2,8 @@
  * AI Bridge — Cloudflare Worker
  * Domain: aibridge.tanstudio.me
  */
-import type { Env } from './types';
-import { isCommercial } from './types';
+import type { Env, ProjectRow, UserRow } from './types';
+import { isCommercial, isPremiumActive } from './types';
 import {
   apiKeyUser,
   changePassword,
@@ -41,6 +41,9 @@ import {
   listProjects,
   getProject,
   resolveProjectForUser,
+  canUseProject,
+  freeTierPrimaryProjectId,
+  FREE_TIER_PROJECT_MSG,
 } from './projects';
 import {
   createPayOrder,
@@ -333,8 +336,22 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (method === 'GET' && path === '/api/projects') {
     const u = await sessionUser(env, req);
     requireUser(u);
+    const full = await getUserById(env.DB, u.id);
     const projects = await listProjects(env.DB, u.id);
-    return json({ success: true, projects });
+    const premium = isPremiumActive(full || u);
+    const primaryId =
+      commercial && !premium ? await freeTierPrimaryProjectId(env.DB, u.id) : null;
+    const enriched = projects.map((p) => ({
+      ...p,
+      usable: !commercial || premium || p.id === primaryId,
+      locked: commercial && !premium && p.id !== primaryId,
+    }));
+    return json({
+      success: true,
+      projects: enriched,
+      free_tier_limit: commercial && !premium,
+      free_tier_message: commercial && !premium ? FREE_TIER_PROJECT_MSG : null,
+    });
   }
 
   if (method === 'POST' && path === '/api/projects') {
@@ -366,8 +383,25 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       return json({ success: false, message: '无权访问' }, 403);
     }
 
+    // Free tier after membership expiry: only the primary (earliest) project is usable
+    const fullOwner = await getUserById(env.DB, u.id);
+    const ownerForLimit = fullOwner || u;
+    const isOwner = project.user_id === u.id;
+    if (isOwner && !(await canUseProject(env, ownerForLimit, project))) {
+      // allow GET metadata + DELETE so user can clean up; block active use
+      const allowMeta = method === 'GET' && rest === '';
+      const allowDelete = method === 'DELETE' && rest === '';
+      if (!allowMeta && !allowDelete) {
+        return json({ success: false, message: FREE_TIER_PROJECT_MSG, locked: true }, 403);
+      }
+    }
+
     if (method === 'GET' && rest === '') {
-      return json({ success: true, project });
+      const usable = await canUseProject(env, ownerForLimit, project);
+      return json({
+        success: true,
+        project: { ...project, usable, locked: !usable },
+      });
     }
 
     if (method === 'DELETE' && rest === '') {
@@ -506,13 +540,26 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // ── Agent API (API Key) ───────────────────────────────
+  async function requireAgentProject(
+    agent: UserRow,
+    pref: string
+  ): Promise<{ project: ProjectRow } | Response> {
+    if (!pref) return json({ success: false, message: '缺少 project 参数' }, 400);
+    const project = await resolveProjectForUser(env.DB, agent.id, pref);
+    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    if (!(await canUseProject(env, agent, project))) {
+      return json({ success: false, message: FREE_TIER_PROJECT_MSG, locked: true }, 403);
+    }
+    return { project };
+  }
+
   if (method === 'GET' && path === '/api/agent/pending') {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
-    if (!pref) return json({ success: false, message: '缺少 project 参数' }, 400);
-    const project = await resolveProjectForUser(env.DB, agent.id, pref);
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, pref);
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const msgs = await pendingUserMessages(env.DB, project.id);
     return json({
       success: true,
@@ -527,10 +574,10 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const body = await readJson<{ project?: string; text?: string; p?: string }>(req);
     const pref = String(body.project || body.p || '');
     const text = String(body.text || '').trim();
-    if (!pref) return json({ success: false, message: '缺少 project' }, 400);
     if (!text) return json({ success: false, message: '回复不能为空' }, 400);
-    const project = await resolveProjectForUser(env.DB, agent.id, pref);
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, pref);
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const msg = await agentReply(env.DB, project.id, text);
     return json({ success: true, message: toMessage(msg) });
   }
@@ -539,8 +586,9 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const body = await readJson<{ project?: string; ids?: string[] }>(req);
-    const project = await resolveProjectForUser(env.DB, agent.id, String(body.project || ''));
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, String(body.project || ''));
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const n = await ackMessages(env.DB, project.id, body.ids);
     return json({ success: true, acked: n });
   }
@@ -550,8 +598,9 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
-    const project = await resolveProjectForUser(env.DB, agent.id, pref);
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, pref);
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const since = url.searchParams.get('since');
     if (since) {
       const files = await listFileChanges(env.DB, project.id, since);
@@ -575,8 +624,9 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
     const fpath = url.searchParams.get('path') || '';
-    const project = await resolveProjectForUser(env.DB, agent.id, pref);
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, pref);
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const row = await getFile(env.DB, project.id, fpath);
     if (!row) return json({ success: false, message: '文件不存在' }, 404);
     return json({ success: true, file: publicFile(row, true) });
@@ -595,8 +645,9 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       base_version?: number;
     }>(req);
     const pref = String(body.project || body.p || '');
-    const project = await resolveProjectForUser(env.DB, agent.id, pref);
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, pref);
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const r = await upsertFile(env, project.id, String(body.path || ''), String(body.content ?? ''), {
       encoding: body.encoding,
       content_type: body.content_type,
@@ -620,8 +671,9 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
     const fpath = url.searchParams.get('path') || '';
-    const project = await resolveProjectForUser(env.DB, agent.id, pref);
-    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const resolved = await requireAgentProject(agent, pref);
+    if (resolved instanceof Response) return resolved;
+    const { project } = resolved;
     const r = await deleteFile(env, project.id, fpath);
     if (!r.ok) return json({ success: false, message: r.error }, r.status);
     return json({ success: true });
@@ -631,10 +683,17 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const projects = await listProjects(env.DB, agent.id);
+    const premium = isPremiumActive(agent);
+    const primaryId =
+      isCommercial(env) && !premium ? await freeTierPrimaryProjectId(env.DB, agent.id) : null;
     return json({
       success: true,
-      user: { username: agent.username, plan: agent.plan },
-      projects,
+      user: { username: agent.username, plan: agent.plan, is_premium: premium },
+      projects: projects.map((p) => ({
+        ...p,
+        usable: !isCommercial(env) || premium || p.id === primaryId,
+        locked: isCommercial(env) && !premium && p.id !== primaryId,
+      })),
     });
   }
 

@@ -33,6 +33,37 @@ export async function getProjectBySlug(
     .first()) as ProjectRow | null;
 }
 
+/**
+ * Free tier (membership inactive): only the earliest project is usable.
+ * Premium active or non-commercial: all projects usable.
+ */
+export async function freeTierPrimaryProjectId(
+  db: D1Database,
+  userId: number
+): Promise<number | null> {
+  const row = await db
+    .prepare(`SELECT id FROM projects WHERE user_id = ? ORDER BY id ASC LIMIT 1`)
+    .bind(userId)
+    .first<{ id: number }>();
+  return row?.id != null ? Number(row.id) : null;
+}
+
+export async function canUseProject(
+  env: Env,
+  user: { id: number; plan?: string; premium_until?: string | null; role?: string },
+  project: ProjectRow
+): Promise<boolean> {
+  if (!isCommercial(env)) return true;
+  if (user.role === 'admin' && project.user_id !== user.id) return true;
+  if (isPremiumActive(user)) return true;
+  if (project.user_id !== user.id) return false;
+  const primary = await freeTierPrimaryProjectId(env.DB, user.id);
+  return primary != null && primary === project.id;
+}
+
+export const FREE_TIER_PROJECT_MSG =
+  '会员已到期或未开通：免费用户仅可使用 1 个项目。请开通会员后继续使用全部项目；每月 5 元，无自动续费。';
+
 export async function createProject(
   env: Env,
   user: UserRow | { id: number; plan: string; premium_until?: string | null },
@@ -51,7 +82,7 @@ export async function createProject(
       return {
         ok: false,
         error:
-          '当前套餐仅可创建 1 个项目。请点击右上角「会员」开通会员后无限制使用，每月 5 元，无自动续费。',
+          '会员已到期或未开通：仅可保留 / 新建 1 个项目。请点击「会员」开通后无限制创建，每月 5 元，无自动续费。',
         status: 403,
       };
     }

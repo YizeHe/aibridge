@@ -82,29 +82,28 @@ function setFlash(msg, isErr = false) {
 
 const SKILLS_URL = 'https://aibridge.tanstudio.me/skills/SKILLS.md';
 
-/** 组装发给 AI 的提示词（含 SKILLS 链接 + 当前用户 API Key） */
-function buildSkillsPrompt(apiKey) {
-  const keyLine = apiKey
-    ? `我的 API Key：${apiKey}`
-    : '我的 API Key：（请先在网站登录后重新复制提示词）';
+/** 组装发给 AI 的提示词（含 SKILLS 链接 + API Key + 项目名） */
+function buildSkillsPrompt(apiKey, projectName) {
   return [
     `请打开并严格按照 SKILLS 说明操作：${SKILLS_URL}`,
-    keyLine,
-    '请用上述 Key 连接 AIBridge，按 SKILLS 下载/运行本地 Agent，并与我当前项目互通。',
+    `我的 API Key：${apiKey}`,
+    `项目名称：${projectName}`,
+    '请用上述 Key 与项目名称连接 AIBridge，按 SKILLS 下载/运行本地 Agent，并与该项目互通。',
   ].join('\n');
 }
 
-/** 给 AI 用的 SKILLS：仅一键复制提示词（含 API Key） */
+/** 给 AI 用的 SKILLS：仅一键复制提示词（含 API Key + 所选项目） */
 function skillsBlock() {
   return `
     <section class="skills-block liquid-glass">
       <h3 style="margin:0;font-size:1.05rem">SKILLS（给 AI）</h3>
       <p style="margin:0;color:var(--text-dim);font-size:0.9rem;line-height:1.55">
-        一键复制提示词发给 AI（已含 SKILLS 链接与你的 API Key）。登录后复制最完整。
+        复制提示词发给 AI（需登录，并选择一个项目；会带上 API Key 与项目名）。
       </p>
       <div class="skills-actions">
         <button type="button" class="btn btn-primary" id="copy-skills-prompt">复制提示词给 AI</button>
       </div>
+      <div id="skills-modal-host"></div>
     </section>`;
 }
 
@@ -122,6 +121,74 @@ async function resolveApiKeyForCopy() {
   return '';
 }
 
+/** 选择项目用于复制提示词；无项目则引导创建 */
+function pickProjectForCopy(host) {
+  return new Promise(async (resolve) => {
+    let list;
+    try {
+      list = await API.get('/api/projects');
+    } catch {
+      setFlash('获取项目列表失败', true);
+      resolve(null);
+      return;
+    }
+    const projects = (list.projects || []).filter((p) => p.usable !== false);
+    const all = list.projects || [];
+    if (!all.length) {
+      setFlash('请先创建一个项目，再复制提示词', true);
+      location.hash = '#/app';
+      render();
+      resolve(null);
+      return;
+    }
+    // Prefer usable projects; if none usable (edge), show all
+    const choices = projects.length ? projects : all;
+    if (choices.length === 1) {
+      resolve(choices[0]);
+      return;
+    }
+    if (!host) {
+      resolve(choices[0]);
+      return;
+    }
+    host.innerHTML = `
+      <div class="modal-mask" id="pick-project-modal">
+        <div class="modal-card">
+          <h3>选择项目</h3>
+          <p style="margin:0 0 0.85rem;color:var(--text-dim);font-size:0.88rem;line-height:1.5">
+            提示词将写入所选项目名称，方便 AI 直接对接。
+          </p>
+          <div class="field">
+            <label for="pick-project-select">项目</label>
+            <select id="pick-project-select" style="width:100%;padding:0.65rem 0.8rem;border-radius:12px;border:1px solid var(--line);background:color-mix(in srgb, var(--bg) 70%, #fff)">
+              ${choices
+                .map(
+                  (p) =>
+                    `<option value="${p.id}">${escapeHtml(p.name)}${p.locked ? '（已锁定）' : ''}</option>`
+                )
+                .join('')}
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn" id="pick-cancel">取消</button>
+            <button type="button" class="btn btn-primary" id="pick-ok">复制</button>
+          </div>
+        </div>
+      </div>`;
+    host.querySelector('#pick-cancel').onclick = () => {
+      host.innerHTML = '';
+      resolve(null);
+    };
+    host.querySelector('#pick-ok').onclick = () => {
+      const sel = host.querySelector('#pick-project-select');
+      const id = Number(sel.value);
+      const p = choices.find((x) => Number(x.id) === id) || choices[0];
+      host.innerHTML = '';
+      resolve(p);
+    };
+  });
+}
+
 function bindSkillsCopy(root) {
   const btn = root.querySelector('#copy-skills-prompt');
   if (!btn) return;
@@ -132,8 +199,23 @@ function bindSkillsCopy(root) {
         setFlash('请先登录后再复制（提示词需带上你的 API Key）', true);
         return;
       }
-      await navigator.clipboard.writeText(buildSkillsPrompt(apiKey));
-      setFlash('提示词已复制（含 API Key）');
+      const host =
+        root.querySelector('#skills-modal-host') ||
+        document.getElementById('skills-modal-host') ||
+        (() => {
+          const d = document.createElement('div');
+          d.id = 'skills-modal-host';
+          document.body.appendChild(d);
+          return d;
+        })();
+      const project = await pickProjectForCopy(host);
+      if (!project) return;
+      if (project.locked) {
+        setFlash('该项目在免费额度下不可用，请开通会员或选择可用项目', true);
+        return;
+      }
+      await navigator.clipboard.writeText(buildSkillsPrompt(apiKey, project.name));
+      setFlash(`提示词已复制（含 API Key 与项目「${project.name}」）`);
     } catch {
       setFlash('复制失败，请手动复制', true);
     }
@@ -555,6 +637,8 @@ async function viewProjects() {
   }
   const list = await API.get('/api/projects');
   state.projects = list.projects || [];
+  const freeLimit = !!list.free_tier_limit;
+  const freeMsg = list.free_tier_message || '';
   const el = $(`
     <div>
       <div class="section-head">
@@ -564,6 +648,14 @@ async function viewProjects() {
           <button type="button" class="btn btn-primary" id="new-p">新建项目</button>
         </div>
       </div>
+      ${
+        freeLimit
+          ? `<div class="alert" style="background:var(--accent-soft);border:1px solid var(--line);color:var(--text);margin-bottom:1rem">
+              ${escapeHtml(freeMsg || '免费额度：仅可使用 1 个项目。开通会员后可使用全部项目。')}
+              <a href="#/billing" style="margin-left:0.5rem">开通会员</a>
+            </div>`
+          : ''
+      }
       <div class="project-grid" id="pgrid"></div>
       <div id="empty" class="empty liquid-glass" style="${state.projects.length ? 'display:none' : ''}">
         <p style="margin:0 0 0.75rem">还没有项目。创建一个，即可与本地 Agent 对话。</p>
@@ -578,20 +670,26 @@ async function viewProjects() {
   const modalHost = el.querySelector('#modal-host');
   grid.innerHTML = '';
   for (const p of state.projects) {
+    const locked = !!p.locked;
     const card = document.createElement('article');
-    card.className = 'liquid-glass project-card';
+    card.className = 'liquid-glass project-card' + (locked ? ' project-card--locked' : '');
     card.innerHTML = `
-      <h3>${escapeHtml(p.name)}</h3>
+      <h3>${escapeHtml(p.name)}${locked ? ' <span style="font-size:0.75rem;color:var(--text-faint);font-weight:500">已锁定</span>' : ''}</h3>
       <p>${escapeHtml(p.description || '暂无描述')}</p>
       <div class="meta">
         <span class="mono">${escapeHtml(p.slug)}</span>
+        ${locked ? '<span>会员到期不可用</span>' : ''}
       </div>
       <div class="actions">
-        <button type="button" data-open="${p.id}">打开</button>
+        <button type="button" data-open="${p.id}" ${locked ? 'disabled title="请开通会员"' : ''}>${locked ? '已锁定' : '打开'}</button>
         <button type="button" data-del="${p.id}">删除</button>
       </div>`;
     card.addEventListener('click', (ev) => {
       if (ev.target.closest('[data-del]')) return;
+      if (locked) {
+        setFlash(freeMsg || '会员到期后仅可使用 1 个项目，请开通会员', true);
+        return;
+      }
       if (ev.target.closest('[data-open]') || !ev.target.closest('.actions')) {
         location.hash = `#/chat/${p.id}`;
       }
@@ -699,6 +797,15 @@ async function viewChat(id) {
     return render();
   }
   const project = pr.project;
+  if (project.locked || project.usable === false) {
+    setFlash(
+      pr.message ||
+        '会员已到期或未开通：免费用户仅可使用 1 个项目。请开通会员或使用可用项目。',
+      true
+    );
+    location.hash = '#/app';
+    return render();
+  }
   const msgRes = await API.get(`/api/projects/${id}/messages`);
   state.messages = msgRes.messages || [];
 
