@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aibridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "aibridge.tanstudio.me/*", "zone_name": "tanstudio.me" }
+  ],
+  "vars": {
+    "APP_NAME": "AIBridge",
+    "SITE_URL": "https://aibridge.tanstudio.me"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "aibridge-db",
+      "database_id": "381a8fa7-187e-48a6-aa14-75056e82e2f8",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

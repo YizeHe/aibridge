@@ -1,0 +1,14 @@
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+*.sqlite
+*.sqlite-journal
+dist/
+.DS_Store
+*.log
+_*.json
+client/aibridge.exe
+client/*.exe
+.env
+.env.*

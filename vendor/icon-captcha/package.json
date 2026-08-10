@@ -1,0 +1,21 @@
+{
+  "name": "@yunstorage/icon-captcha",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "types": "./index.d.ts"
+    },
+    "./browser": {
+      "import": "./browser.js",
+      "types": "./browser.d.ts"
+    },
+    "./card": {
+      "import": "./card.js",
+      "types": "./card.d.ts"
+    }
+  }
+}

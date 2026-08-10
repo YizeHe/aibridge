@@ -1,0 +1,50 @@
+.md p { margin: 0.4em 0; }
+.md pre {
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  overflow: auto;
+  font-size: 0.8rem;
+}
+.md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: rgba(15, 23, 42, 0.8);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+}
+.md pre code { background: transparent; padding: 0; }
+.md table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.md th, .md td { border: 1px solid #334155; padding: 0.4rem 0.6rem; }
+.md th { background: #0f172a; }
+.md a { color: #38bdf8; }
+.md ul, .md ol { padding-left: 1.25rem; margin: 0.4em 0; }
+.captcha-canvas {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  background: #f8fafc;
+  border-radius: 0.75rem;
+  border: 1px solid #cbd5e1;
+  overflow: hidden;
+}
+.captcha-item {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  border-radius: 0.5rem;
+  background: #fff;
+  border: 2px solid #94a3b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+.captcha-item.selected {
+  border-color: #2563eb;
+  background: #dbeafe;
+}
+.captcha-item svg { width: 24px; height: 24px; fill: #0f172a; stroke: #0f172a; }

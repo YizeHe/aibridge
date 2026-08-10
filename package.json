@@ -1,0 +1,22 @@
+{
+  "name": "aibridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud AI Bridge — multi-user project chat relay on Cloudflare",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply aibridge-db --local",
+    "db:migrate": "wrangler d1 migrations apply aibridge-db --remote",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@yunstorage/icon-captcha": "file:./vendor/icon-captcha"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.28.0"
+  }
+}

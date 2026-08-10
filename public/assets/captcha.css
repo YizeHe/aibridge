@@ -1,0 +1,193 @@
+/* icon-captcha 样式 */
+
+.icon-captcha-widget {
+  max-width: 400px;
+  width: 100%;
+  margin: 0 auto;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  user-select: none;
+  box-sizing: border-box;
+}
+
+/* 提示条 */
+.icon-captcha-prompt {
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a202c;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+/* 画布 */
+.icon-captcha-canvas {
+  position: relative;
+  width: 100%;
+  background: #ffffff;
+  border: 1px dashed #cbd5e0;
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 160px;
+  margin-bottom: 12px;
+}
+
+/* 图标项 */
+.icon-captcha-item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+}
+
+.icon-captcha-item:hover {
+  transform: translate(-50%, -50%) scale(1.18);
+  filter: drop-shadow(0 2px 6px rgba(59, 130, 246, 0.35));
+  z-index: 2;
+}
+
+.icon-captcha-item:active {
+  transform: translate(-50%, -50%) scale(0.95);
+}
+
+.icon-captcha-glyph {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  color: #1e293b;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.icon-captcha-glyph svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 序号徽章 */
+.icon-captcha-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* 反馈区 */
+.icon-captcha-feedback {
+  text-align: center;
+  min-height: 24px;
+  line-height: 24px;
+  font-size: 14px;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.icon-captcha-success {
+  color: #16a34a;
+}
+
+.icon-captcha-error {
+  color: #dc2626;
+}
+
+/* 按钮栏 */
+.icon-captcha-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.icon-captcha-btn {
+  padding: 8px 18px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #f9fafb;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+  font-family: inherit;
+}
+
+.icon-captcha-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.icon-captcha-btn:active {
+  background: #e5e7eb;
+}
+
+.icon-captcha-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.icon-captcha-btn-submit {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.icon-captcha-btn-submit:hover:not(:disabled) {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+/* 移动端适配 */
+@media (max-width: 480px) {
+  .icon-captcha-widget {
+    padding: 14px;
+    border-radius: 10px;
+  }
+
+  .icon-captcha-prompt {
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  .icon-captcha-glyph {
+    width: 1.6rem;
+    height: 1.6rem;
+  }
+
+  .icon-captcha-item {
+    width: 40px;
+    height: 40px;
+  }
+
+  .icon-captcha-btn {
+    padding: 7px 14px;
+    font-size: 13px;
+  }
+}
