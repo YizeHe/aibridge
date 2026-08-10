@@ -183,7 +183,8 @@ export async function createPayOrder(
   const out_trade_no = orderNo();
   const base = siteBase(env, req);
   const notify_url = notifyUrl(env, req);
-  const return_url = `${base}/`;
+  // 支付完成回站：账号页（会员状态可见）；发货仍以 notify 回调为准
+  const return_url = `${base}/#/account`;
   const name = `AIBridge ${plan === 'monthly' ? '月付' : '年付'}`;
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
@@ -194,9 +195,11 @@ export async function createPayOrder(
     .bind(out_trade_no, userId, plan, amount, payType)
     .run();
 
+  // method 必须用 jump（跳转支付）。web 在部分通道会返回：
+  // 「本次支付需要安全验证，请使用跳转支付接口发起支付」
   const payParams: Record<string, string> = {
     pid: String(pid),
-    method: 'web',
+    method: 'jump',
     type: payType,
     out_trade_no,
     notify_url,
@@ -215,13 +218,30 @@ export async function createPayOrder(
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(payParams).toString(),
     });
-    const payData = (await resp.json()) as {
+    const rawText = await resp.text();
+    let payData: {
       code?: number;
       pay_info?: string;
+      payurl?: string;
+      pay_url?: string;
       trade_no?: string;
       msg?: string;
-    };
-    if (payData.code === 0 && payData.pay_info) {
+      message?: string;
+    } = {};
+    try {
+      payData = JSON.parse(rawText) as typeof payData;
+    } catch {
+      await env.DB.prepare(`UPDATE orders SET status = 'failed' WHERE id = ?`)
+        .bind(out_trade_no)
+        .run();
+      return {
+        ok: false,
+        error: '支付平台返回非 JSON：' + rawText.slice(0, 200),
+        status: 502,
+      };
+    }
+    const payUrl = String(payData.pay_info || payData.payurl || payData.pay_url || '').trim();
+    if (Number(payData.code) === 0 && payUrl) {
       if (payData.trade_no) {
         await env.DB.prepare(`UPDATE orders SET trade_no = ? WHERE id = ?`)
           .bind(String(payData.trade_no), out_trade_no)
@@ -229,7 +249,7 @@ export async function createPayOrder(
       }
       return {
         ok: true,
-        payUrl: payData.pay_info,
+        payUrl,
         order_no: out_trade_no,
         trade_no: payData.trade_no,
       };
@@ -237,9 +257,16 @@ export async function createPayOrder(
     await env.DB.prepare(`UPDATE orders SET status = 'failed' WHERE id = ?`)
       .bind(out_trade_no)
       .run();
+    const platformMsg = payData.msg || payData.message || '创建支付失败';
+    // 友好化常见错误
+    let error = platformMsg;
+    if (/安全验证|跳转支付/.test(platformMsg)) {
+      error =
+        '支付通道要求跳转收银台。请稍后重试；若持续失败请联系客服（工单）。技术说明：下单 method 须为 jump。';
+    }
     return {
       ok: false,
-      error: payData.msg || '创建支付失败',
+      error,
       status: 502,
     };
   } catch (e: unknown) {

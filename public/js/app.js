@@ -1507,7 +1507,7 @@ async function viewAccount() {
           <h3 style="margin:0 0 0.75rem;font-size:1rem">激活码</h3>
           <form id="redeem">
             <label class="field">输入激活码
-              <input name="code" required placeholder="例如 RemoteAiGENT" autocomplete="off" />
+              <input name="code" required placeholder="新用户福利：RemoteAiGENT" autocomplete="off" />
             </label>
             <button class="btn" type="submit">兑换</button>
           </form>`
@@ -1593,7 +1593,7 @@ async function viewBilling() {
         </p>
         <form id="redeem-billing">
           <label class="field">激活码
-            <input name="code" required placeholder="例如 RemoteAiGENT" autocomplete="off" />
+            <input name="code" required placeholder="新用户福利：RemoteAiGENT" autocomplete="off" />
           </label>
           <button class="btn btn-primary" type="submit">兑换</button>
         </form>
