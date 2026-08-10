@@ -1,4 +1,40 @@
-const state = { user: null, projects: [], projectId: null, ws: null };
+/**
+ * AIBridge SPA — liquid-glass project cards, light/dark theme, optional commercial pay.
+ */
+import { API } from './api.js';
+import { mountIconCaptcha } from './captcha.js';
+import {
+  initWorld,
+  watchProjectGrid,
+  getTheme,
+  toggleTheme,
+} from './layout.js';
+
+const state = {
+  user: null,
+  projects: [],
+  projectId: null,
+  messages: [],
+  plans: null,
+  commercial: false,
+  error: '',
+  notice: '',
+  unsubGrid: null,
+  es: null,
+};
+
+let glassModule = null;
+
+async function loadGlass() {
+  if (glassModule) return glassModule;
+  try {
+    glassModule = await import('/vendor/liquidglass/liquid-glass.js');
+    return glassModule;
+  } catch (e) {
+    console.warn('liquid-glass unavailable', e);
+    return null;
+  }
+}
 
 function $(html) {
   const t = document.createElement('template');
@@ -6,54 +42,53 @@ function $(html) {
   return t.content.firstElementChild;
 }
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function md(text) {
   if (window.marked && window.DOMPurify) {
     marked.setOptions({ gfm: true, breaks: true });
     return DOMPurify.sanitize(marked.parse(text || ''));
   }
-  return String(text || '').replace(/</g, '&lt;');
+  return escapeHtml(text).replace(/\n/g, '<br/>');
 }
 
-function shell(content) {
-  const app = document.getElementById('app');
-  app.innerHTML = '';
-  const nav = $(`
-    <header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-20">
-      <div class="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
-        <a href="#/" class="font-semibold tracking-tight text-white">AIBridge</a>
-        <nav class="flex items-center gap-4 text-sm text-slate-300" id="nav"></nav>
-      </div>
-    </header>`);
-  const main = document.createElement('main');
-  main.className = 'mx-auto max-w-6xl px-4 py-8';
-  main.appendChild(content);
-  app.appendChild(nav);
-  app.appendChild(main);
-  const n = nav.querySelector('#nav');
-  if (state.user) {
-    n.innerHTML = `
-      <a class="hover:text-white" href="#/app">Projects</a>
-      <a class="hover:text-white" href="#/account">Account</a>
-      ${state.user.role === 'admin' ? '<a class="hover:text-white" href="#/admin">Admin</a>' : ''}
-      <button id="logout" class="rounded-lg bg-slate-800 px-3 py-1.5 hover:bg-slate-700">Logout</button>`;
-    n.querySelector('#logout').onclick = async () => {
-      try { await API.post('/api/auth/logout', {}); } catch {}
-      API.setToken('');
-      state.user = null;
-      location.hash = '#/login';
-      render();
-    };
-  } else {
-    n.innerHTML = `
-      <a class="hover:text-white" href="#/login">Sign in</a>
-      <a class="rounded-lg bg-sky-600 px-3 py-1.5 text-white hover:bg-sky-500" href="#/register">Register</a>`;
+function fmtTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return String(iso);
   }
 }
 
+function themeIcon() {
+  const dark = getTheme() === 'dark';
+  // sun / moon as pure SVG paths — no emoji
+  if (dark) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/></svg>`;
+}
+
+function setFlash(msg, isErr = false) {
+  state.error = isErr ? msg : '';
+  state.notice = isErr ? '' : msg;
+}
+
 async function ensureUser() {
-  if (!API.token) return null;
+  if (!API.token) {
+    state.user = null;
+    return null;
+  }
   try {
     const r = await API.get('/api/me');
+    if (!r.success) throw new Error(r.message || 'unauthorized');
     state.user = r.user || r.data;
     return state.user;
   } catch {
@@ -63,336 +98,579 @@ async function ensureUser() {
   }
 }
 
+async function loadPlans() {
+  try {
+    const r = await API.get('/api/plans');
+    if (r.success) {
+      state.commercial = !!r.commercial;
+      state.plans = r.plans || [];
+    }
+  } catch {
+    state.commercial = false;
+    state.plans = null;
+  }
+}
+
+function shell(content) {
+  if (state.unsubGrid) {
+    state.unsubGrid();
+    state.unsubGrid = null;
+  }
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  const header = $(`
+    <header class="topbar">
+      <a class="brand" href="#/">AIBridge</a>
+      <nav class="nav" id="nav"></nav>
+    </header>`);
+  const page = document.createElement('div');
+  page.className = 'page';
+  page.appendChild(content);
+  app.append(header, page);
+
+  const nav = header.querySelector('#nav');
+  const themeBtn = document.createElement('button');
+  themeBtn.type = 'button';
+  themeBtn.className = 'theme-toggle';
+  themeBtn.title = 'Toggle light / dark';
+  themeBtn.setAttribute('aria-label', 'Toggle theme');
+  themeBtn.innerHTML = themeIcon();
+  themeBtn.onclick = () => {
+    toggleTheme();
+    themeBtn.innerHTML = themeIcon();
+    initWorld(document.getElementById('world'));
+  };
+
+  if (state.user) {
+    nav.innerHTML = `
+      <a href="#/app">Projects</a>
+      <a href="#/account">Account</a>
+      ${state.commercial ? '<a href="#/billing">Membership</a>' : ''}
+      <button type="button" class="nav-link" id="logout">Sign out</button>`;
+    nav.querySelector('#logout').onclick = async () => {
+      try {
+        await API.post('/api/auth/logout', {});
+      } catch {
+        /* ignore */
+      }
+      API.setToken('');
+      state.user = null;
+      location.hash = '#/';
+      render();
+    };
+  } else {
+    nav.innerHTML = `
+      <a href="#/login">Sign in</a>
+      <a class="btn btn-primary" href="#/register" style="text-decoration:none">Register</a>`;
+  }
+  nav.appendChild(themeBtn);
+
+  if (state.error || state.notice) {
+    const alert = document.createElement('div');
+    alert.className = `alert ${state.error ? 'alert-error' : 'alert-ok'}`;
+    alert.textContent = state.error || state.notice;
+    page.prepend(alert);
+    setTimeout(() => {
+      state.error = '';
+      state.notice = '';
+      alert.remove();
+    }, 4200);
+  }
+}
+
+async function enhanceGlass(root) {
+  const mod = await loadGlass();
+  if (!mod?.autoBind) return;
+  try {
+    mod.autoBind(root || document);
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
 function viewHome() {
   const el = $(`
-    <div class="grid gap-10 lg:grid-cols-2 lg:items-center">
-      <div>
-        <p class="text-sky-400 text-sm font-medium mb-3">Cloudflare AI agent bridge</p>
-        <h1 class="text-4xl font-semibold tracking-tight text-white mb-4">Chat with your local AI agents from the web</h1>
-        <p class="text-slate-400 mb-6 leading-relaxed">
-          Create a project, connect an agent with your API key and the AIBridge skill.
-          Free accounts get one project; premium is unlimited.
+    <div>
+      <section class="hero">
+        <h1>Bridge the browser and your local AI agent</h1>
+        <p>
+          Create a project, connect an agent with your API key, and chat from the web.
+          Demo: <a href="https://aibridge.tanstudio.me" target="_blank" rel="noopener">aibridge.tanstudio.me</a>
         </p>
-        <div class="flex gap-3">
-          <a href="#/register" class="rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500">Get started</a>
-          <a href="#/login" class="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-900">Sign in</a>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#/register" style="text-decoration:none">Get started</a>
+          <a class="btn" href="#/login" style="text-decoration:none">Sign in</a>
         </div>
-      </div>
-      <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <div class="text-xs text-slate-500 mb-3">Agent protocol</div>
-        <pre class="text-xs text-emerald-300/90 overflow-auto">GET /api/agent/pending?project=NAME
-X-API-Key: ab_xxx
-
-POST /api/agent/reply
-{"project":"NAME","text":"markdown reply"}</pre>
+      </section>
+      <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px">
+        <article class="liquid-glass project-card" data-liquid-glass data-preset="soft" data-scale="42" data-radius="22">
+          <h3>Project channels</h3>
+          <p>Each project isolates pending messages between you and the agent.</p>
+          <div class="meta"><span>API</span><span>/api/agent/*</span></div>
+        </article>
+        <article class="liquid-glass project-card" data-liquid-glass data-preset="crystal" data-scale="44" data-radius="22">
+          <h3>Local agent client</h3>
+          <p>Go binary or any HTTP client polls pending messages and posts replies.</p>
+          <div class="meta"><span>Client</span><span>skills/</span></div>
+        </article>
+        <article class="liquid-glass project-card" data-liquid-glass data-preset="soft" data-scale="40" data-radius="22">
+          <h3>Register and go</h3>
+          <p>Icon captcha on register, session login, API key for agents.</p>
+          <div class="meta"><span>Auth</span><span>session + key</span></div>
+        </article>
       </div>
     </div>`);
   shell(el);
+  const grid = el.querySelector('#feature-grid');
+  state.unsubGrid = watchProjectGrid(grid);
+  enhanceGlass(el);
 }
 
 function viewLogin() {
-  const el = $(`
-    <div class="mx-auto max-w-md">
-      <h1 class="text-2xl font-semibold mb-6">Sign in</h1>
-      <form id="f" class="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <label class="block text-sm">Username
-          <input name="username" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" required />
-        </label>
-        <label class="block text-sm">Password
-          <input name="password" type="password" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" required />
-        </label>
-        <p id="err" class="text-sm text-rose-400 hidden"></p>
-        <button class="w-full rounded-lg bg-sky-600 py-2.5 text-sm font-medium hover:bg-sky-500">Sign in</button>
-      </form>
-    </div>`);
+  const el = document.createElement('div');
+  el.className = 'panel liquid-glass';
+  el.dataset.liquidGlass = '';
+  el.dataset.preset = 'soft';
+  el.dataset.scale = '36';
+  el.dataset.radius = '24';
+  el.innerHTML = `
+    <h1 style="margin:0 0 1rem;font-size:1.35rem">Sign in</h1>
+    <form id="f">
+      <label class="field">Username
+        <input name="username" autocomplete="username" required />
+      </label>
+      <label class="field">Password
+        <input name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button class="btn btn-primary" type="submit" style="width:100%">Sign in</button>
+    </form>
+    <p style="margin:1rem 0 0;font-size:0.88rem;color:var(--text-dim)">
+      No account? <a href="#/register">Register</a>
+    </p>`;
   shell(el);
   el.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    try {
-      const r = await API.post('/api/auth/login', {
-        username: fd.get('username'),
-        password: fd.get('password'),
-      });
-      API.setToken(r.session || r.token || '');
-      state.user = r.user;
-      location.hash = '#/app';
+    const r = await API.post('/api/auth/login', {
+      username: fd.get('username'),
+      password: fd.get('password'),
+    });
+    if (!r.success) {
+      setFlash(r.message || 'Login failed', true);
       render();
-    } catch (ex) {
-      const err = el.querySelector('#err');
-      err.textContent = ex.message;
-      err.classList.remove('hidden');
+      return;
     }
+    if (r.session) API.setToken(r.session);
+    state.user = r.user;
+    setFlash('Signed in');
+    location.hash = '#/app';
+    render();
   };
+  enhanceGlass(el);
 }
 
 function viewRegister() {
-  const el = $(`
-    <div class="mx-auto max-w-md">
-      <h1 class="text-2xl font-semibold mb-6">Create account</h1>
-      <form id="f" class="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <label class="block text-sm">Username
-          <input name="username" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" required />
-        </label>
-        <label class="block text-sm">Password (min 8)
-          <input name="password" type="password" minlength="8" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" required />
-        </label>
-        <div>
-          <div class="text-sm mb-2">Human verification</div>
-          <div id="captcha"></div>
-        </div>
-        <p id="err" class="text-sm text-rose-400 hidden"></p>
-        <button class="w-full rounded-lg bg-sky-600 py-2.5 text-sm font-medium hover:bg-sky-500">Register</button>
-      </form>
-    </div>`);
+  const el = document.createElement('div');
+  el.className = 'panel liquid-glass';
+  el.dataset.liquidGlass = '';
+  el.dataset.preset = 'soft';
+  el.dataset.scale = '36';
+  el.dataset.radius = '24';
+  el.innerHTML = `
+    <h1 style="margin:0 0 1rem;font-size:1.35rem">Create account</h1>
+    <form id="f">
+      <label class="field">Username
+        <input name="username" autocomplete="username" required minlength="2" maxlength="32" />
+      </label>
+      <label class="field">Password (min 8)
+        <input name="password" type="password" autocomplete="new-password" required minlength="8" />
+      </label>
+      <div id="captcha" class="field"></div>
+      <button class="btn btn-primary" type="submit" style="width:100%">Register</button>
+    </form>
+    <p style="margin:1rem 0 0;font-size:0.88rem;color:var(--text-dim)">
+      Already have an account? <a href="#/login">Sign in</a>
+    </p>`;
   shell(el);
-  const box = el.querySelector('#captcha');
-  mountIconCaptcha(box);
+  let cap = { token: '', slots: [] };
+  mountIconCaptcha(el.querySelector('#captcha'))
+    .then((c) => {
+      cap = c;
+    })
+    .catch((err) => {
+      setFlash(err.message || 'Captcha failed to load', true);
+      render();
+    });
   el.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const err = el.querySelector('#err');
-    const slots = JSON.parse(box.dataset.slots || '[]');
-    if (slots.length < 3) {
-      err.textContent = 'Complete captcha first';
-      err.classList.remove('hidden');
+    const r = await API.post('/api/auth/register', {
+      username: fd.get('username'),
+      password: fd.get('password'),
+      captcha_token: cap.token,
+      captcha_slots: cap.slots,
+    });
+    if (!r.success) {
+      setFlash(r.message || 'Register failed', true);
+      render();
       return;
     }
-    try {
-      const r = await API.post('/api/auth/register', {
-        username: fd.get('username'),
-        password: fd.get('password'),
-        captcha_token: box.dataset.token,
-        captcha_slots: slots,
-      });
-      API.setToken(r.session || '');
-      state.user = r.user;
-      location.hash = '#/app';
-      render();
-    } catch (ex) {
-      err.textContent = ex.message;
-      err.classList.remove('hidden');
-      mountIconCaptcha(box);
-    }
+    if (r.session) API.setToken(r.session);
+    state.user = r.user;
+    setFlash('Welcome — account created');
+    location.hash = '#/app';
+    render();
   };
+  enhanceGlass(el);
 }
 
-async function viewApp() {
-  if (!(await ensureUser())) {
+async function viewProjects() {
+  const u = await ensureUser();
+  if (!u) {
     location.hash = '#/login';
     return render();
   }
-  const pr = await API.get('/api/projects');
-  const projects = pr.projects || pr.data || [];
+  const list = await API.get('/api/projects');
+  state.projects = list.projects || [];
   const el = $(`
     <div>
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-semibold">Projects</h1>
-        <button id="newp" class="rounded-lg bg-sky-600 px-3 py-2 text-sm hover:bg-sky-500">New project</button>
+      <div class="section-head">
+        <h2>Projects</h2>
+        <button type="button" class="btn btn-primary" id="new-p">New project</button>
       </div>
-      <div id="list" class="grid gap-3 sm:grid-cols-2"></div>
-      <p class="mt-4 text-sm text-slate-500">Free: 1 project. Premium: unlimited.</p>
+      <div class="project-grid" id="pgrid"></div>
+      <div id="empty" class="empty liquid-glass" data-liquid-glass data-preset="soft" data-scale="30" style="${state.projects.length ? 'display:none' : ''}">
+        <div class="lg-content" style="text-align:center;padding:2rem">
+          <p style="margin:0 0 0.75rem">No projects yet. Create one to start chatting with your agent.</p>
+          <button type="button" class="btn btn-primary" id="new-p2">Create project</button>
+        </div>
+      </div>
     </div>`);
   shell(el);
-  const list = el.querySelector('#list');
-  if (!projects.length) list.innerHTML = '<div class="text-slate-500 text-sm">No projects yet.</div>';
-  projects.forEach((p) => {
-    list.appendChild(
-      $(`<a href="#/chat/${p.id}" class="block rounded-xl border border-slate-800 bg-slate-900/50 p-4 hover:border-slate-600">
-        <div class="font-medium text-white">${p.name}</div>
-        <div class="text-xs text-slate-500 mt-1">${p.slug} · #${p.id}</div>
-      </a>`)
-    );
-  });
-  el.querySelector('#newp').onclick = async () => {
+  const grid = el.querySelector('#pgrid');
+  for (const p of state.projects) {
+    const card = $(`
+      <article class="liquid-glass project-card" data-liquid-glass data-preset="crystal" data-scale="40" data-radius="22" data-id="${p.id}">
+        <h3>${escapeHtml(p.name)}</h3>
+        <p>${escapeHtml(p.description || 'No description')}</p>
+        <div class="meta">
+          <span class="mono">${escapeHtml(p.slug)}</span>
+          <div class="actions">
+            <button type="button" data-open="${p.id}">Open</button>
+            <button type="button" data-del="${p.id}">Delete</button>
+          </div>
+        </div>
+      </article>`);
+    // wrap content for glass
+    const inner = document.createElement('div');
+    // project-card structure: liquid-glass will wrap children into lg-content
+    grid.appendChild(card);
+  }
+  // Fix: cards need content as direct children for liquid-glass wrap
+  // Rebuild cards properly
+  grid.innerHTML = '';
+  for (const p of state.projects) {
+    const card = document.createElement('article');
+    card.className = 'liquid-glass project-card';
+    card.dataset.liquidGlass = '';
+    card.dataset.preset = 'crystal';
+    card.dataset.scale = '40';
+    card.dataset.radius = '22';
+    card.innerHTML = `
+      <h3>${escapeHtml(p.name)}</h3>
+      <p>${escapeHtml(p.description || 'No description')}</p>
+      <div class="meta">
+        <span class="mono">${escapeHtml(p.slug)}</span>
+        <div class="actions">
+          <button type="button" data-open="${p.id}">Open</button>
+          <button type="button" data-del="${p.id}">Delete</button>
+        </div>
+      </div>`;
+    card.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-del]')) return;
+      if (ev.target.closest('[data-open]') || !ev.target.closest('.actions')) {
+        location.hash = `#/chat/${p.id}`;
+      }
+    });
+    grid.appendChild(card);
+  }
+
+  const create = async () => {
     const name = prompt('Project name');
     if (!name) return;
-    try {
-      await API.post('/api/projects', { name });
-      viewApp();
-    } catch (e) {
-      alert(e.message);
+    const r = await API.post('/api/projects', { name, description: '' });
+    if (!r.success) {
+      setFlash(r.message || 'Create failed', true);
+      render();
+      return;
     }
+    location.hash = `#/chat/${r.project.id}`;
+    render();
   };
+  el.querySelector('#new-p').onclick = create;
+  el.querySelector('#new-p2')?.addEventListener('click', create);
+  grid.querySelectorAll('[data-del]').forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this project?')) return;
+      const id = btn.getAttribute('data-del');
+      const r = await API.del(`/api/projects/${id}`);
+      if (!r.success) setFlash(r.message || 'Delete failed', true);
+      render();
+    };
+  });
+  state.unsubGrid = watchProjectGrid(grid);
+  enhanceGlass(el);
 }
 
 async function viewChat(id) {
-  if (!(await ensureUser())) {
+  const u = await ensureUser();
+  if (!u) {
     location.hash = '#/login';
     return render();
   }
-  const pr = await API.get('/api/projects');
-  const project = (pr.projects || []).find((p) => Number(p.id) === Number(id));
-  if (!project) {
+  state.projectId = Number(id);
+  const pr = await API.get(`/api/projects/${id}`);
+  if (!pr.success) {
+    setFlash(pr.message || 'Project not found', true);
     location.hash = '#/app';
     return render();
   }
+  const project = pr.project;
+  const msgRes = await API.get(`/api/projects/${id}/messages`);
+  state.messages = msgRes.messages || [];
+
   const el = $(`
-    <div class="flex flex-col h-[calc(100vh-8rem)]">
-      <div class="mb-3">
-        <a href="#/app" class="text-sm text-slate-500 hover:text-slate-300">Projects</a>
-        <h1 class="text-xl font-semibold">${project.name}</h1>
+    <div class="chat-layout">
+      <div class="section-head" style="margin:0">
+        <div>
+          <a href="#/app" style="font-size:0.85rem;color:var(--text-dim)">Projects</a>
+          <h2 style="margin:0.2rem 0 0">${escapeHtml(project.name)}</h2>
+          <div class="mono" style="color:var(--text-faint);margin-top:0.15rem">slug: ${escapeHtml(project.slug)}</div>
+        </div>
       </div>
-      <div id="log" class="flex-1 overflow-auto space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4"></div>
-      <form id="f" class="mt-3 flex gap-2">
-        <textarea id="t" rows="2" class="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" placeholder="Message your agent..."></textarea>
-        <button class="rounded-xl bg-sky-600 px-4 text-sm font-medium hover:bg-sky-500">Send</button>
+      <div class="chat-log scroll-thin" id="log"></div>
+      <form class="chat-compose" id="compose">
+        <textarea name="text" rows="2" placeholder="Message your agent..." required></textarea>
+        <button class="btn btn-primary" type="submit">Send</button>
       </form>
     </div>`);
   shell(el);
   const log = el.querySelector('#log');
-  function addMsg(m) {
-    const isUser = m.role === 'user';
-    const wrap = document.createElement('div');
-    wrap.className = 'max-w-3xl ' + (isUser ? 'ml-auto' : '');
-    wrap.innerHTML = `<div class="text-[11px] text-slate-500 mb-1">${isUser ? 'You' : 'Agent'}</div>
-      <div class="rounded-xl border px-3 py-2 text-sm ${isUser ? 'border-sky-900 bg-sky-950/40 whitespace-pre-wrap' : 'border-slate-700 bg-slate-950/60 md'}"></div>`;
-    const body = wrap.lastElementChild;
-    if (isUser) body.textContent = m.content || m.text || '';
-    else body.innerHTML = md(m.content || m.text || '');
-    log.appendChild(wrap);
+  function paint() {
+    log.innerHTML = '';
+    for (const m of state.messages) {
+      const b = document.createElement('div');
+      b.className = `bubble ${m.role === 'user' ? 'user' : 'agent'}`;
+      b.innerHTML = `<div class="who">${m.role === 'user' ? 'You' : 'Agent'} · ${fmtTime(m.ts || m.created_at)}</div><div class="msg-md">${md(m.text)}</div>`;
+      log.appendChild(b);
+    }
     log.scrollTop = log.scrollHeight;
   }
-  const hist = await API.get('/api/projects/' + id + '/messages');
-  (hist.messages || hist.data || []).forEach(addMsg);
+  paint();
 
-  // SSE if available
-  try {
-    const es = new EventSource('/api/projects/' + id + '/events?session=' + encodeURIComponent(API.token));
-    es.onmessage = (ev) => {
-      try {
-        const p = JSON.parse(ev.data);
-        if (p.message) addMsg(p.message);
-        else if (p.content) addMsg(p);
-      } catch {}
-    };
-  } catch {}
-
-  el.querySelector('#f').onsubmit = async (e) => {
+  el.querySelector('#compose').onsubmit = async (e) => {
     e.preventDefault();
-    const t = el.querySelector('#t');
-    const content = t.value.trim();
-    if (!content) return;
-    t.value = '';
+    const ta = e.target.text;
+    const text = ta.value.trim();
+    if (!text) return;
+    ta.value = '';
+    const r = await API.post(`/api/projects/${id}/messages`, { text });
+    if (!r.success) {
+      setFlash(r.message || 'Send failed', true);
+      return;
+    }
+    if (r.message) state.messages.push(r.message);
+    else state.messages.push({ role: 'user', text, ts: new Date().toISOString() });
+    paint();
+  };
+
+  // poll messages
+  if (state.es) {
     try {
-      const r = await API.post('/api/projects/' + id + '/messages', { content, text: content });
-      const m = r.message || r.data;
-      if (m) addMsg(m);
-    } catch (ex) {
-      alert(ex.message);
+      state.es.close();
+    } catch {
+      /* */
+    }
+  }
+  const poll = async () => {
+    try {
+      const r = await API.get(`/api/projects/${id}/messages`);
+      if (r.success && Array.isArray(r.messages)) {
+        const prev = state.messages.length;
+        state.messages = r.messages;
+        if (r.messages.length !== prev) paint();
+      }
+    } catch {
+      /* */
     }
   };
+  const timer = setInterval(poll, 2500);
+  state.es = { close: () => clearInterval(timer) };
 }
 
 async function viewAccount() {
-  if (!(await ensureUser())) {
+  const u = await ensureUser();
+  if (!u) {
     location.hash = '#/login';
     return render();
   }
-  const u = state.user;
+  const full = await API.get('/api/me');
+  const user = full.user || u;
   const el = $(`
-    <div class="max-w-xl space-y-6">
-      <h1 class="text-2xl font-semibold">Account</h1>
-      <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 space-y-2 text-sm">
-        <div><span class="text-slate-500">Username</span> · ${u.username}</div>
-        <div><span class="text-slate-500">Role / plan</span> · ${u.role}${u.plan ? ' / ' + u.plan : ''}</div>
-        <div class="break-all"><span class="text-slate-500">API Key</span><br/><code class="text-emerald-300/90">${u.api_key || ''}</code></div>
-        <button id="rotate" class="mt-2 rounded-lg border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800">Rotate API key</button>
+    <div class="panel-wide liquid-glass" data-liquid-glass data-preset="soft" data-scale="34" data-radius="24">
+      <div class="lg-content" style="padding:1.4rem">
+        <h2 style="margin:0 0 1rem">Account</h2>
+        <div class="field">Username<div style="color:var(--text);font-weight:600">${escapeHtml(user.username)}</div></div>
+        <div class="field">API Key
+          <div class="mono" id="api-key">${escapeHtml(user.api_key || '')}</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0 1rem">
+          <button type="button" class="btn" id="copy-key">Copy key</button>
+          <button type="button" class="btn" id="rotate-key">Rotate key</button>
+        </div>
+        ${
+          state.commercial
+            ? `<div class="field">Membership
+            <div>${user.is_premium || user.plan === 'premium' ? 'Active' : 'Free'} ${user.premium_until ? '· until ' + escapeHtml(user.premium_until) : ''}</div>
+          </div>
+          <a class="btn btn-primary" href="#/billing" style="text-decoration:none">Manage membership</a>`
+            : ''
+        }
+        <hr style="border:0;border-top:1px solid var(--line);margin:1.25rem 0" />
+        <h3 style="margin:0 0 0.75rem;font-size:1rem">Change password</h3>
+        <form id="pw">
+          <label class="field">Current password<input type="password" name="old_password" required /></label>
+          <label class="field">New password<input type="password" name="new_password" required minlength="8" /></label>
+          <button class="btn" type="submit">Update password</button>
+        </form>
       </div>
-      <form id="pw" class="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 space-y-3">
-        <h2 class="font-medium">Change password</h2>
-        <input name="old_password" type="password" placeholder="Current password" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" required />
-        <input name="new_password" type="password" placeholder="New password (min 8)" minlength="8" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" required />
-        <button class="rounded-lg bg-sky-600 px-3 py-2 text-sm hover:bg-sky-500">Update</button>
-      </form>
     </div>`);
   shell(el);
-  el.querySelector('#rotate').onclick = async () => {
-    if (!confirm('Rotate API key?')) return;
+  el.querySelector('#copy-key').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(user.api_key || '');
+      setFlash('API key copied');
+    } catch {
+      setFlash('Copy failed', true);
+    }
+    render();
+  };
+  el.querySelector('#rotate-key').onclick = async () => {
+    if (!confirm('Rotate API key? Agents using the old key will stop working.')) return;
     const r = await API.post('/api/apikey/rotate', {});
-    alert('New key: ' + (r.api_key || ''));
-    await ensureUser();
-    viewAccount();
+    if (!r.success) setFlash(r.message || 'Rotate failed', true);
+    else setFlash('API key rotated');
+    render();
   };
   el.querySelector('#pw').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    try {
-      await API.post('/api/auth/password', {
-        old_password: fd.get('old_password'),
-        new_password: fd.get('new_password'),
-      });
-      alert('Password updated');
-      e.target.reset();
-    } catch (ex) {
-      alert(ex.message);
-    }
+    const r = await API.post('/api/auth/password', {
+      old_password: fd.get('old_password'),
+      new_password: fd.get('new_password'),
+    });
+    setFlash(r.message || (r.success ? 'Password updated' : 'Failed'), !r.success);
+    render();
   };
+  enhanceGlass(el);
 }
 
-async function viewAdmin() {
-  if (!(await ensureUser()) || state.user.role !== 'admin') {
-    location.hash = '#/app';
+async function viewBilling() {
+  const u = await ensureUser();
+  if (!u) {
+    location.hash = '#/login';
     return render();
   }
-  const r = await API.get('/api/admin/users');
-  const users = r.users || r.data || [];
+  await loadPlans();
+  if (!state.commercial) {
+    location.hash = '#/account';
+    return render();
+  }
+  const plans = state.plans?.length
+    ? state.plans
+    : [
+        { id: 'monthly', name: 'Monthly', price: 5, period: 'month' },
+        { id: 'yearly', name: 'Yearly', price: 50, period: 'year' },
+      ];
   const el = $(`
     <div>
-      <h1 class="text-2xl font-semibold mb-4">Admin</h1>
-      <div class="overflow-auto rounded-xl border border-slate-800">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-900 text-slate-400 text-left"><tr>
-            <th class="px-3 py-2">ID</th><th class="px-3 py-2">User</th><th class="px-3 py-2">Plan</th>
-            <th class="px-3 py-2">Banned</th><th class="px-3 py-2">Actions</th>
-          </tr></thead>
-          <tbody id="tb"></tbody>
-        </table>
-      </div>
+      <div class="section-head"><h2>Membership</h2></div>
+      <p style="color:var(--text-dim);margin:0 0 1.25rem;max-width:36rem">
+        Self-service plans. After payment succeeds, premium access is extended automatically.
+      </p>
+      <div class="price-grid" id="prices"></div>
     </div>`);
   shell(el);
-  const tb = el.querySelector('#tb');
-  users.forEach((u) => {
-    const tr = document.createElement('tr');
-    tr.className = 'border-t border-slate-800';
-    tr.innerHTML = `<td class="px-3 py-2">${u.id}</td><td class="px-3 py-2">${u.username}</td>
-      <td class="px-3 py-2">${u.plan || u.role}</td><td class="px-3 py-2">${u.banned ? 'yes' : 'no'}</td>
-      <td class="px-3 py-2 space-x-2">
-        <button data-a="prem" class="text-sky-400 text-xs">Premium</button>
-        <button data-a="free" class="text-slate-400 text-xs">Free</button>
-        <button data-a="ban" class="text-rose-400 text-xs">Ban</button>
-        <button data-a="unban" class="text-emerald-400 text-xs">Unban</button>
-        <button data-a="pw" class="text-amber-400 text-xs">Reset PW</button>
-      </td>`;
-    tr.querySelectorAll('button').forEach((btn) => {
-      btn.onclick = async () => {
-        const a = btn.dataset.a;
-        if (a === 'prem') await API.post('/api/admin/users/' + u.id + '/premium', { premium: true });
-        if (a === 'free') await API.post('/api/admin/users/' + u.id + '/premium', { premium: false });
-        if (a === 'ban') await API.post('/api/admin/users/' + u.id + '/ban', { banned: true });
-        if (a === 'unban') await API.post('/api/admin/users/' + u.id + '/ban', { banned: false });
-        if (a === 'pw') {
-          const pw = prompt('New password');
-          if (!pw) return;
-          await API.post('/api/admin/users/' + u.id + '/password', { password: pw });
-        }
-        viewAdmin();
-      };
-    });
-    tb.appendChild(tr);
+  const grid = el.querySelector('#prices');
+  for (const p of plans) {
+    const card = document.createElement('article');
+    card.className = 'liquid-glass price-card';
+    card.dataset.liquidGlass = '';
+    card.dataset.preset = 'soft';
+    card.dataset.scale = '38';
+    card.dataset.radius = '22';
+    card.innerHTML = `
+      <h3 style="margin:0">${escapeHtml(p.name || p.id)}</h3>
+      <div class="price">${Number(p.price).toFixed(0)}<span> CNY / ${escapeHtml(p.period || '')}</span></div>
+      <p style="margin:0;color:var(--text-dim);font-size:0.9rem">Unlimited projects while membership is active.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:0.45rem;margin-top:0.5rem">
+        <button type="button" class="btn btn-primary" data-plan="${p.id}" data-pay="alipay">Alipay</button>
+        <button type="button" class="btn" data-plan="${p.id}" data-pay="wxpay">WeChat Pay</button>
+      </div>`;
+    grid.appendChild(card);
+  }
+  grid.querySelectorAll('button[data-plan]').forEach((btn) => {
+    btn.onclick = async () => {
+      const plan = btn.getAttribute('data-plan');
+      const payType = btn.getAttribute('data-pay');
+      btn.disabled = true;
+      const r = await API.post('/api/pay/create', { plan, payType });
+      btn.disabled = false;
+      if (!r.success) {
+        setFlash(r.message || 'Payment create failed', true);
+        render();
+        return;
+      }
+      if (r.payUrl) {
+        location.href = r.payUrl;
+        return;
+      }
+      setFlash('No pay URL returned', true);
+      render();
+    };
   });
+  enhanceGlass(el);
 }
 
 async function render() {
+  initWorld(document.getElementById('world'));
+  await loadPlans();
   const hash = location.hash || '#/';
-  if (hash.startsWith('#/chat/')) return viewChat(Number(hash.split('/')[2]));
-  if (hash === '#/login') return viewLogin();
-  if (hash === '#/register') return viewRegister();
-  if (hash === '#/app') return viewApp();
-  if (hash === '#/account') return viewAccount();
-  if (hash === '#/admin') return viewAdmin();
+  const path = hash.replace(/^#/, '') || '/';
+
+  if (path === '/' || path === '') return viewHome();
+  if (path === '/login') return viewLogin();
+  if (path === '/register') return viewRegister();
+  if (path === '/app' || path === '/projects') return viewProjects();
+  if (path === '/account') return viewAccount();
+  if (path === '/billing') return viewBilling();
+  const chat = path.match(/^\/chat\/(\d+)/);
+  if (chat) return viewChat(chat[1]);
+
+  // default
+  if (API.token) {
+    location.hash = '#/app';
+    return viewProjects();
+  }
   return viewHome();
 }
 
-window.addEventListener('hashchange', render);
-ensureUser().finally(render);
+window.addEventListener('hashchange', () => render());
+window.addEventListener('resize', () => initWorld(document.getElementById('world')));
+
+// boot
+(async () => {
+  await ensureUser();
+  await render();
+})();

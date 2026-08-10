@@ -12,3 +12,5 @@ client/aibridge.exe
 client/*.exe
 .env
 .env.*
+# payment / merchant secrets (local only, never push)
+key/

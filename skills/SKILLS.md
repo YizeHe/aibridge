@@ -138,9 +138,8 @@ Content-Type: application/json
 
 ## 账号规则（告知用户）
 
-- 免费账号：最多 **1** 个项目
-- Premium：项目数量不限（由管理员开通）
 - 注册需人机验证；可在网站修改密码、轮换 API Key
+- 登录用户可创建项目，并使用 API Key 连接本地 Agent
 
 ## 安全
 

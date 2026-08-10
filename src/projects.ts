@@ -1,4 +1,5 @@
 import type { Env, ProjectRow, UserRow } from './types';
+import { isCommercial, isPremiumActive } from './types';
 import { slugify } from './http';
 
 export async function countProjects(db: D1Database, userId: number): Promise<number> {
@@ -34,7 +35,7 @@ export async function getProjectBySlug(
 
 export async function createProject(
   env: Env,
-  user: UserRow | { id: number; plan: string },
+  user: UserRow | { id: number; plan: string; premium_until?: string | null },
   name: string,
   description = ''
 ): Promise<{ ok: true; project: ProjectRow } | { ok: false; error: string; status: number }> {
@@ -42,13 +43,17 @@ export async function createProject(
   if (!n || n.length > 64) {
     return { ok: false, error: '项目名称 1-64 字符', status: 400 };
   }
-  const count = await countProjects(env.DB, user.id);
-  if (user.plan !== 'premium' && count >= 1) {
-    return {
-      ok: false,
-      error: '免费账号仅可创建 1 个项目，请升级 Premium',
-      status: 403,
-    };
+
+  // OSS / non-commercial: no project limits for logged-in users
+  if (isCommercial(env)) {
+    const count = await countProjects(env.DB, user.id);
+    if (!isPremiumActive(user) && count >= 1) {
+      return {
+        ok: false,
+        error: '当前套餐仅可创建 1 个项目',
+        status: 403,
+      };
+    }
   }
 
   let base = slugify(n);

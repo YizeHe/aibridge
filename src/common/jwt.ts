@@ -1,5 +1,10 @@
-import * as jose from 'jose';
-import type { UserRole } from '../types';
+/**
+ * Legacy JWT session helpers (unused).
+ * Runtime sessions use D1 `sessions` table via src/auth.ts.
+ * Kept as type-only stubs so the tree typechecks without the `jose` package.
+ */
+
+export type UserRole = 'user' | 'admin';
 
 export interface Claims {
   sub: number;
@@ -7,31 +12,14 @@ export interface Claims {
   role: UserRole;
 }
 
-export async function signSession(secret: string, claims: Claims, ttl = 86400 * 7) {
-  const exp = Math.floor(Date.now() / 1000) + ttl;
-  const token = await new jose.SignJWT({
-    username: claims.username,
-    role: claims.role,
-  })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(String(claims.sub))
-    .setExpirationTime(exp)
-    .setIssuedAt()
-    .sign(new TextEncoder().encode(secret));
-  return { token, exp };
+export async function signSession(
+  _secret: string,
+  _claims: Claims,
+  _ttl = 86400 * 7
+): Promise<{ token: string; exp: number }> {
+  throw new Error('JWT sessions are not used; see auth.ts createSession');
 }
 
-export async function verifySession(secret: string, token: string): Promise<Claims | null> {
-  try {
-    const { payload } = await jose.jwtVerify(token, new TextEncoder().encode(secret));
-    const sub = Number(payload.sub);
-    if (!sub) return null;
-    return {
-      sub,
-      username: String(payload.username || ''),
-      role: (payload.role as UserRole) || 'user',
-    };
-  } catch {
-    return null;
-  }
+export async function verifySession(_secret: string, _token: string): Promise<Claims | null> {
+  return null;
 }

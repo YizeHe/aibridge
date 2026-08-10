@@ -63,8 +63,10 @@ export function publicUser(u: UserRow) {
     id: u.id,
     username: u.username,
     role: u.role,
-    status: u.status,
+    plan: u.plan,
+    banned: Boolean(u.banned),
     api_key: u.api_key,
+    premium_until: u.premium_until ?? null,
     created_at: u.created_at,
   };
 }

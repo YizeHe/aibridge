@@ -1,10 +1,13 @@
 import type { Env, SessionUser, UserRow } from './types';
+import { isPremiumActive } from './types';
 import { generateApiKey, hashPassword, randomId, verifyPassword } from './crypto';
 import { getCookie } from './http';
 
 const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
 
 export function publicUser(u: UserRow | SessionUser) {
+  const premium_until =
+    'premium_until' in u ? (u as UserRow).premium_until ?? null : (u as SessionUser).premium_until ?? null;
   return {
     id: u.id,
     username: u.username,
@@ -13,6 +16,8 @@ export function publicUser(u: UserRow | SessionUser) {
     banned: 'banned' in u ? Boolean((u as UserRow).banned) : (u as SessionUser).banned,
     api_key: u.api_key,
     created_at: 'created_at' in u ? (u as UserRow).created_at : undefined,
+    premium_until: premium_until ?? null,
+    is_premium: isPremiumActive({ plan: u.plan, premium_until }),
   };
 }
 
@@ -66,6 +71,7 @@ export async function sessionUser(env: Env, req: Request): Promise<SessionUser |
     plan: row.plan,
     banned: false,
     api_key: row.api_key,
+    premium_until: row.premium_until ?? null,
   };
 }
 
@@ -98,8 +104,9 @@ export async function registerUser(
 
   const password_hash = await hashPassword(password);
   const api_key = generateApiKey();
-  const role = name.toLowerCase() === 'root' ? 'admin' : 'user';
-  const plan = name.toLowerCase() === 'root' ? 'premium' : 'free';
+  // Open registration: always normal user (no special root→admin)
+  const role = 'user';
+  const plan = 'free';
 
   try {
     const r = await db
@@ -118,20 +125,6 @@ export async function registerUser(
     if (msg.includes('UNIQUE')) return { ok: false, error: '用户名已存在' };
     return { ok: false, error: msg };
   }
-}
-
-export async function ensureAdminSeed(db: D1Database): Promise<void> {
-  const root = await getUserByUsername(db, 'root');
-  if (root) return;
-  const password_hash = await hashPassword('ROOT12345678');
-  const api_key = generateApiKey();
-  await db
-    .prepare(
-      `INSERT INTO users (username, password_hash, role, plan, api_key)
-       VALUES ('root', ?, 'admin', 'premium', ?)`
-    )
-    .bind(password_hash, api_key)
-    .run();
 }
 
 export async function changePassword(

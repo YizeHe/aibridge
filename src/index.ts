@@ -4,12 +4,12 @@
  */
 import { createChallenge, verifyChallenge } from '@yunstorage/icon-captcha';
 import type { Env } from './types';
+import { isCommercial } from './types';
 import {
   apiKeyUser,
   changePassword,
   createSession,
   destroySession,
-  ensureAdminSeed,
   getUserById,
   getUserByUsername,
   publicUser,
@@ -42,18 +42,12 @@ import {
   getProject,
   resolveProjectForUser,
 } from './projects';
-
-let seeded = false;
-
-async function seedOnce(env: Env) {
-  if (seeded) return;
-  try {
-    await ensureAdminSeed(env.DB);
-    seeded = true;
-  } catch {
-    // tables may not exist yet on first boot before migration
-  }
-}
+import {
+  createPayOrder,
+  handlePayNotify,
+  PUBLIC_PLANS,
+  type PayPlanId,
+} from './pay';
 
 function requireUser(u: Awaited<ReturnType<typeof sessionUser>>): asserts u is NonNullable<typeof u> {
   if (!u) throw new HttpError(401, '未登录');
@@ -68,9 +62,9 @@ class HttpError extends Error {
 }
 
 async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
-  await seedOnce(env);
   const path = url.pathname;
   const method = req.method.toUpperCase();
+  const commercial = isCommercial(env);
 
   // ── Captcha ───────────────────────────────────────────
   if (method === 'GET' && path === '/api/captcha/challenge') {
@@ -86,6 +80,47 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       secrets(env).captcha
     );
     return json(result);
+  }
+
+  // ── Plans (public) ────────────────────────────────────
+  if (method === 'GET' && path === '/api/plans') {
+    return json({
+      success: true,
+      commercial,
+      plans: commercial ? PUBLIC_PLANS : [],
+    });
+  }
+
+  // ── Payment (commercial only) ─────────────────────────
+  if (path === '/api/pay/create' || path === '/api/pay/notify') {
+    if (!commercial) {
+      return json({ success: false, message: 'not found' }, 404);
+    }
+  }
+
+  if (method === 'POST' && path === '/api/pay/create') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const body = await readJson<{ plan?: string; payType?: string }>(req);
+    const plan = String(body.plan || '') as PayPlanId;
+    const payType = String(body.payType || '');
+    if (plan !== 'monthly' && plan !== 'yearly') {
+      return json({ success: false, message: '无效套餐' }, 400);
+    }
+    if (payType !== 'alipay' && payType !== 'wxpay') {
+      return json({ success: false, message: '无效支付方式' }, 400);
+    }
+    const r = await createPayOrder(env, req, u.id, plan, payType);
+    if (!r.ok) return json({ success: false, message: r.error }, r.status);
+    return json({
+      success: true,
+      payUrl: r.payUrl,
+      order_no: r.order_no,
+    });
+  }
+
+  if ((method === 'POST' || method === 'GET') && path === '/api/pay/notify') {
+    return handlePayNotify(env, req, url);
   }
 
   // ── Auth ──────────────────────────────────────────────
@@ -155,7 +190,6 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const sid =
       req.headers.get('X-Session') ||
       (await readJson<{ session?: string }>(req)).session;
-    // best-effort destroy from cookie path handled client-side too
     const cookieSid = req.headers.get('Cookie') || '';
     const m = cookieSid.match(/aibridge_session=([^;]+)/);
     const id = sid || (m ? decodeURIComponent(m[1]) : '');
@@ -225,13 +259,13 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     requireUser(u);
     const project = await getProject(env.DB, projectId);
     if (!project || project.user_id !== u.id) {
-      // admin can view any? only for admin user management elsewhere
-      if (u.role !== 'admin' || !project) {
+      // commercial-only: role=admin may view others; OSS has no admin surface
+      if (!commercial || u.role !== 'admin' || !project) {
         return json({ success: false, message: '项目不存在' }, 404);
       }
     }
     if (!project) return json({ success: false, message: '项目不存在' }, 404);
-    if (project.user_id !== u.id && u.role !== 'admin') {
+    if (project.user_id !== u.id && !(commercial && u.role === 'admin')) {
       return json({ success: false, message: '无权访问' }, 403);
     }
 
@@ -265,10 +299,8 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       return json({ success: true, message: toMessage(msg) });
     }
 
-    // lightweight long-poll style: client uses EventSource not available multi-isolate;
-    // provide SSE that streams heartbeats + polls DB briefly
     if (method === 'GET' && rest === '/events') {
-      if (project.user_id !== u.id && u.role !== 'admin') {
+      if (project.user_id !== u.id && !(commercial && u.role === 'admin')) {
         return json({ success: false, message: '无权访问' }, 403);
       }
       let last = url.searchParams.get('since') || new Date(Date.now() - 1000).toISOString();
@@ -280,7 +312,7 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
           };
           send({ type: 'hello', ts: Date.now(), project_id: projectId });
           let alive = true;
-          const maxTicks = 45; // ~90s then client reconnects
+          const maxTicks = 45;
           for (let i = 0; i < maxTicks && alive; i++) {
             try {
               const msgs = await listMessages(env.DB, projectId, { since: last, limit: 50 });
@@ -316,7 +348,6 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // ── Agent API (API Key) ───────────────────────────────
-  // GET /api/agent/pending?project=slug|id
   if (method === 'GET' && path === '/api/agent/pending') {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
@@ -332,7 +363,6 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     });
   }
 
-  // POST /api/agent/reply { project, text }
   if (method === 'POST' && path === '/api/agent/reply') {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
@@ -357,7 +387,6 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ success: true, acked: n });
   }
 
-  // Agent bootstrap: list projects for this API key
   if (method === 'GET' && path === '/api/agent/projects') {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
@@ -369,14 +398,12 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     });
   }
 
-  // Agent ensure project exists (create if missing, respect plan limits)
   if (method === 'POST' && path === '/api/agent/projects') {
     const agent = await apiKeyUser(env, req);
     if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
     const body = await readJson<{ name?: string; description?: string }>(req);
     const name = String(body.name || '').trim();
     if (!name) return json({ success: false, message: '缺少 name' }, 400);
-    // if slug exists return it
     const existing = await listProjects(env.DB, agent.id);
     const hit = existing.find((p) => p.name === name || p.slug === name);
     if (hit) return json({ success: true, project: hit, created: false });
@@ -385,15 +412,19 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ success: true, project: r.project, created: true });
   }
 
-  // ── Admin ─────────────────────────────────────────────
+  // ── Admin: disabled in open-source mode ───────────────
   if (path.startsWith('/api/admin/')) {
+    if (!commercial) {
+      return json({ success: false, message: 'not found' }, 404);
+    }
+
     const u = await sessionUser(env, req);
     requireUser(u);
     if (u.role !== 'admin') return json({ success: false, message: '需要管理员权限' }, 403);
 
     if (method === 'GET' && path === '/api/admin/users') {
       const r = await env.DB.prepare(
-        `SELECT id, username, role, plan, banned, api_key, created_at, updated_at FROM users ORDER BY id ASC`
+        `SELECT id, username, role, plan, banned, api_key, premium_until, created_at, updated_at FROM users ORDER BY id ASC`
       ).all();
       return json({ success: true, users: r.results || [] });
     }
@@ -425,18 +456,26 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const premMatch = path.match(/^\/api\/admin\/users\/(\d+)\/premium$/);
     if (method === 'POST' && premMatch) {
       const id = Number(premMatch[1]);
-      const body = await readJson<{ premium?: boolean; plan?: string }>(req);
+      const body = await readJson<{ premium?: boolean; plan?: string; premium_until?: string | null }>(req);
       const plan =
         body.plan === 'free' || body.premium === false
           ? 'free'
           : 'premium';
+      const premium_until =
+        plan === 'free'
+          ? null
+          : body.premium_until !== undefined
+            ? body.premium_until
+            : null;
       await env.DB.prepare(
-        `UPDATE users SET plan = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+        `UPDATE users SET plan = ?, premium_until = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
       )
-        .bind(plan, id)
+        .bind(plan, premium_until, id)
         .run();
-      return json({ success: true, plan });
+      return json({ success: true, plan, premium_until });
     }
+
+    return json({ success: false, message: 'not found' }, 404);
   }
 
   // Health
@@ -444,6 +483,7 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({
       success: true,
       app: env.APP_NAME || 'AI Bridge',
+      commercial,
       time: new Date().toISOString(),
     });
   }
@@ -469,7 +509,6 @@ export default {
       return json({ success: false, message: msg }, 500);
     }
 
-    // Static assets / SPA
     if (env.ASSETS) {
       return env.ASSETS.fetch(req);
     }

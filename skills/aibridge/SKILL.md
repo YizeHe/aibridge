@@ -56,7 +56,6 @@ Content-Type: application/json
 
 - Prefer **Markdown** in replies (web renders it).
 - Send **progress** messages while working (`progress: true`).
-- Free accounts: 1 project. Premium: unlimited.
 - Never print the full API key in public logs.
 
 ## Local bridge compatibility
