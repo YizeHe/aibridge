@@ -14,7 +14,9 @@
   --danger: #e11d48;
   --ok: #059669;
   --radius: 22px;
-  --card-pad: clamp(1.15rem, 3.2vw, 1.55rem);
+  /* single length — used in max() / padding; outer chrome grows around text */
+  --card-pad-y: 1.45rem;
+  --card-pad-x: 1.65rem;
   --shadow: 0 12px 40px rgba(30, 40, 70, 0.08);
   --font: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -22,7 +24,6 @@
   --card-ratio: auto;
   --lg-tint: rgba(255, 255, 255, 0.42);
   --lg-border: rgba(255, 255, 255, 0.5);
-  --card-pad: 1.35rem 1.45rem;
 }
 
 html.dark {
@@ -300,6 +301,10 @@ html.dark .field select {
 }
 
 /* ---------- Liquid glass cards ---------- */
+/*
+ * 原则：文字字号/行高/文案不动；卡片外壳用内边距把文字包住（壳外扩）。
+ * 不要把卡片格子硬撑成超宽/超高空壳。高度随内容；无 aspect-ratio 裁切。
+ */
 
 .liquid-glass {
   position: relative;
@@ -307,13 +312,39 @@ html.dark .field select {
   border-radius: var(--lg-radius, var(--radius));
   color: var(--text);
   --lg-radius: var(--radius);
+  box-sizing: border-box;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: auto;
+  /* 外壳内边距：文字区外再留一圈，避免贴圆角/溢出 */
+  padding: var(--card-pad-y) var(--card-pad-x);
+  /* 无 JS 时也有玻璃底，文字始终落在壳内 */
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    var(--lg-tint) 45%,
+    rgba(147, 197, 253, 0.12) 100%
+  );
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  backdrop-filter: blur(14px) saturate(1.35);
   box-shadow:
     0 0 0 1px var(--lg-border),
     0 1px 0 rgba(255, 255, 255, 0.5) inset,
     0 10px 36px rgba(30, 40, 70, 0.08);
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.28s ease;
-  /* visible so text is never clipped by radius/filters */
   overflow: visible;
+}
+
+html.dark .liquid-glass {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    var(--lg-tint) 42%,
+    rgba(56, 189, 248, 0.06) 100%
+  );
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
 }
 
 .liquid-glass:hover {
@@ -330,20 +361,22 @@ html.dark .field select {
   border-radius: inherit;
   z-index: 0;
   overflow: hidden;
+  /* surface 叠在壳背景上；有 surface 时仍盖满外壳（含 padding 区） */
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.35) 0%,
     var(--lg-tint) 45%,
-    rgba(147, 197, 253, 0.12) 100%
+    rgba(147, 197, 253, 0.1) 100%
   );
   -webkit-backdrop-filter: blur(14px) saturate(1.35);
   backdrop-filter: blur(14px) saturate(1.35);
+  pointer-events: none;
 }
 
 html.dark .lg-surface {
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.08) 0%,
     var(--lg-tint) 42%,
     rgba(56, 189, 248, 0.06) 100%
   );
@@ -368,36 +401,34 @@ html.dark .lg-surface {
   width: 100%;
   height: auto;
   min-height: 0;
-  padding: 1.35rem 1.5rem;
+  max-height: none;
+  /* 外壳已有 padding，内容层不再重复压窄文字区 */
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
   box-sizing: border-box;
+  overflow: visible;
 }
 
-/* Always pad glass cards so text stays clear of rounded corners */
-/* 文字不动：卡片外壳向外扩约 10%（更大内边距），避免文字贴边/溢出 */
+/* 登录/注册等表单面板：略增内边距，仍随内容增高 */
 .liquid-glass.panel,
-.liquid-glass.panel-wide,
+.liquid-glass.panel-wide {
+  padding: max(var(--card-pad-y), 1.5rem) max(var(--card-pad-x), 1.75rem);
+  overflow: visible;
+  min-width: 0;
+}
+
 .liquid-glass.price-card,
 .liquid-glass.project-card,
 .liquid-glass.feature-card,
 .liquid-glass.skills-block {
-  padding: 1.55rem 1.7rem;
+  padding: var(--card-pad-y) var(--card-pad-x);
   overflow: visible;
-  box-sizing: border-box;
-  /* 相对原内容区外扩：左右多出约 10% 视觉留白 */
   min-width: 0;
-}
-.liquid-glass.panel > .lg-content,
-.liquid-glass.panel-wide > .lg-content,
-.liquid-glass.price-card > .lg-content,
-.liquid-glass.project-card > .lg-content,
-.liquid-glass.feature-card > .lg-content,
-.liquid-glass.skills-block > .lg-content {
-  padding: 0;
   height: auto;
-  overflow: visible;
+  max-height: none;
+  aspect-ratio: auto;
 }
 
 /* Project grid — dynamic columns via JS sets --cols / --gap / --card-w */
@@ -408,7 +439,8 @@ html.dark .lg-surface {
   display: grid;
   grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
   gap: var(--gap);
-  align-items: stretch;
+  /* 不拉伸成等高空壳：卡片高度贴合文字 */
+  align-items: start;
 }
 
 .project-card,
@@ -416,9 +448,17 @@ html.dark .lg-surface {
 .price-card {
   min-height: 0;
   height: auto;
+  max-height: none;
+  aspect-ratio: auto;
   cursor: default;
   width: 100%;
   text-align: center;
+  box-sizing: border-box;
+  /* 未包 lg-content 时也用 flex 排布，间距固定不靠撑高 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
 }
 .project-card {
   cursor: pointer;
@@ -434,6 +474,21 @@ html.dark .lg-surface {
   gap: 0.7rem;
 }
 
+/* 直接子节点（未包 lg-content 时）同样居中 */
+.project-card > h3,
+.feature-card > h3,
+.price-card > h3,
+.project-card > p,
+.feature-card > p,
+.price-card > p,
+.project-card > .meta,
+.feature-card > .meta,
+.price-card > .price,
+.price-card > .pay-row {
+  position: relative;
+  z-index: 1;
+}
+
 .project-card h3,
 .feature-card h3,
 .price-card h3 {
@@ -441,12 +496,12 @@ html.dark .lg-surface {
   font-size: 1.08rem;
   font-weight: 680;
   letter-spacing: -0.02em;
-  line-height: 1.35;
+  line-height: 1.45;
   text-align: center;
   width: 100%;
   max-width: 100%;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
   overflow: visible;
   box-sizing: border-box;
 }
@@ -457,12 +512,12 @@ html.dark .lg-surface {
   margin: 0;
   color: var(--text-dim);
   font-size: 0.9rem;
-  line-height: 1.55;
+  line-height: 1.6;
   text-align: center;
   width: 100%;
   max-width: 100%;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
   overflow: visible;
   flex: 0 1 auto;
   box-sizing: border-box;
@@ -936,11 +991,13 @@ html.dark .msg-md pre {
   backdrop-filter: blur(10px);
 }
 
-/* Pricing */
+/* Pricing — 卡片贴合内容宽度，不拉成整行空壳 */
 .price-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 300px));
   gap: 1rem;
+  justify-content: start;
+  align-items: start;
 }
 .price-card .lg-content {
   gap: 0.65rem;
@@ -956,42 +1013,33 @@ html.dark .msg-md pre {
   color: var(--text-dim);
 }
 
-/* SKILLS download block */
+/* SKILLS：宽度随内容，不整行空壳；外壳 padding 已包住文字 */
 .skills-block {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
-.skills-block .lg-content,
-.skills-block {
-  /* safe padding before/after glass wrap */
+.skills-block h3,
+.skills-block p {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  max-width: 36rem;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.skills-block p {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.55;
 }
 .skills-actions {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
   margin-top: 0.15rem;
-}
-
-/* ensure panels get safe padding even before glass JS wraps */
-.liquid-glass.panel,
-.liquid-glass.panel-wide {
-  padding: var(--card-pad);
-  padding-left: max(var(--card-pad), 1.4rem);
-  padding-right: max(var(--card-pad), 1.4rem);
-  padding-top: max(var(--card-pad), 1.35rem);
-  padding-bottom: max(var(--card-pad), 1.35rem);
-}
-/* after liquid-glass wraps, .lg-content has padding; neutralize double pad */
-.liquid-glass.panel > .lg-content,
-.liquid-glass.panel-wide > .lg-content,
-.liquid-glass.skills-block > .lg-content {
-  padding: 0;
-}
-.liquid-glass.skills-block {
-  padding: var(--card-pad);
-  padding-left: max(var(--card-pad), 1.4rem);
-  padding-right: max(var(--card-pad), 1.4rem);
-  padding-top: max(var(--card-pad), 1.35rem);
-  padding-bottom: max(var(--card-pad), 1.35rem);
 }
 .liquid-glass.skills-block > .lg-content {
   padding: 0;
