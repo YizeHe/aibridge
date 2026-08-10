@@ -305,9 +305,41 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (method === 'POST' && path === '/api/phone/send-code') {
     const u = await sessionUser(env, req);
     requireUser(u);
-    const body = await readJson<{ phone?: string }>(req);
+    const body = await readJson<{ phone?: string; turnstile_token?: string; captcha_token?: string }>(
+      req
+    );
     const phone = normalizePhone(String(body.phone || ''));
     if (!phone) return json({ success: false, message: '请输入正确的中国大陆手机号' }, 400);
+
+    // Turnstile 必填
+    const turnstileToken = String(body.turnstile_token || body.captcha_token || '');
+    if (!turnstileToken) {
+      return json({ success: false, message: '请先完成人机验证' }, 400);
+    }
+    const tsSecret = env.TURNSTILE_SECRET || '';
+    if (tsSecret) {
+      try {
+        const ip =
+          req.headers.get('CF-Connecting-IP') ||
+          req.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+          '';
+        const form = new URLSearchParams();
+        form.set('secret', tsSecret);
+        form.set('response', turnstileToken);
+        if (ip) form.set('remoteip', ip);
+        const vr = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: form.toString(),
+        });
+        const vj = (await vr.json()) as { success?: boolean };
+        if (!vj.success) {
+          return json({ success: false, message: '人机验证失败，请重试' }, 400);
+        }
+      } catch {
+        return json({ success: false, message: '人机验证服务异常' }, 502);
+      }
+    }
 
     const full = await getUserById(env.DB, u.id);
     if (full?.phone) {
@@ -322,17 +354,18 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       return json({ success: false, message: '该手机号已绑定其他账号' }, 400);
     }
 
-    // 冷却 60s
+    // 冷却 60s（按手机号 + 用户）
     const recent = await env.DB.prepare(
-      `SELECT created_at FROM sms_codes WHERE phone = ? AND purpose = 'bind'
+      `SELECT created_at FROM sms_codes WHERE (phone = ? OR user_id = ?) AND purpose = 'bind'
        ORDER BY id DESC LIMIT 1`
     )
-      .bind(phone)
+      .bind(phone, u.id)
       .first<{ created_at: string }>();
     if (recent?.created_at) {
       const t = Date.parse(recent.created_at);
       if (!Number.isNaN(t) && Date.now() - t < 60_000) {
-        return json({ success: false, message: '发送太频繁，请稍后再试' }, 429);
+        const wait = Math.ceil((60_000 - (Date.now() - t)) / 1000);
+        return json({ success: false, message: `发送太频繁，请 ${wait} 秒后再试`, cooldown: wait }, 429);
       }
     }
 
@@ -345,8 +378,16 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       .run();
 
     const send = await sendSmsCode(env, phone, code);
-    if (!send.ok) return json({ success: false, message: send.msg }, 502);
-    return json({ success: true, message: '验证码已发送' });
+    if (!send.ok) {
+      // 发送失败时删掉刚写的验证码，避免占冷却
+      await env.DB.prepare(
+        `DELETE FROM sms_codes WHERE phone = ? AND purpose = 'bind' AND code = ?`
+      )
+        .bind(phone, code)
+        .run();
+      return json({ success: false, message: send.msg }, 502);
+    }
+    return json({ success: true, message: '验证码已发送', cooldown: 60 });
   }
 
   if (method === 'POST' && path === '/api/phone/bind') {

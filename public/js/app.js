@@ -78,6 +78,20 @@ function themeIcon() {
 function setFlash(msg, isErr = false) {
   state.error = isErr ? msg : '';
   state.notice = isErr ? '' : msg;
+  // 立即显示提示（不必等整页 re-render）
+  try {
+    const page = document.querySelector('#app .page') || document.getElementById('app');
+    if (!page) return;
+    page.querySelectorAll('.alert-live').forEach((n) => n.remove());
+    const alert = document.createElement('div');
+    alert.className = `alert alert-live ${isErr ? 'alert-error' : 'alert-ok'}`;
+    alert.textContent = msg;
+    if (page.firstChild) page.insertBefore(alert, page.firstChild);
+    else page.appendChild(alert);
+    setTimeout(() => alert.remove(), 4500);
+  } catch {
+    /* ignore */
+  }
 }
 
 const SKILLS_URL = 'https://aibridge.tanstudio.me/skills/SKILLS.md';
@@ -1505,11 +1519,12 @@ async function viewAccount() {
        </div>`
     : `<div class="field">手机号
          <p style="margin:0 0 0.65rem;font-size:0.88rem;color:var(--text-dim);line-height:1.5">
-           使用激活码前须绑定手机（防止白嫖）。一账号一手机，不可更换。
+           使用激活码前须绑定手机（防止白嫖）。一账号一手机，不可更换。发送验证码前请完成人机验证。
          </p>
          <label class="field">手机号
            <input id="bind-phone" type="tel" maxlength="11" placeholder="11 位手机号" autocomplete="tel" />
          </label>
+         <div id="phone-turnstile" class="field" style="min-height:70px"></div>
          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-end">
            <label class="field" style="flex:1;min-width:8rem;margin-bottom:0">验证码
              <input id="bind-code" type="text" maxlength="8" placeholder="短信验证码" autocomplete="one-time-code" />
@@ -1556,7 +1571,6 @@ async function viewAccount() {
     } catch {
       setFlash('复制失败', true);
     }
-    render();
   };
   el.querySelector('#rotate-key').onclick = async () => {
     if (!confirm('确定轮换 API Key？旧 Key 将立即失效。')) return;
@@ -1573,16 +1587,77 @@ async function viewAccount() {
       new_password: fd.get('new_password'),
     });
     setFlash(r.message || (r.success ? '密码已更新' : '更新失败'), !r.success);
-    render();
+    if (r.success) render();
   };
+
+  // 绑定手机：Turnstile + 发送倒计时
+  let phoneTs = null;
+  let smsTimer = null;
+  let smsLeft = 0;
   const sendSms = el.querySelector('#send-sms');
+  const tsBox = el.querySelector('#phone-turnstile');
+  if (tsBox && !user.phone_bound) {
+    try {
+      await loadPlans();
+      phoneTs = await mountTurnstile(tsBox, state.turnstileSiteKey);
+    } catch (e) {
+      tsBox.innerHTML = '<div style="color:var(--danger);font-size:0.88rem">人机验证加载失败，请刷新重试</div>';
+      console.warn(e);
+    }
+  }
+  function startSmsCountdown(sec = 60) {
+    if (!sendSms) return;
+    if (smsTimer) clearInterval(smsTimer);
+    smsLeft = sec;
+    sendSms.disabled = true;
+    sendSms.textContent = `${smsLeft}s`;
+    smsTimer = setInterval(() => {
+      smsLeft -= 1;
+      if (smsLeft <= 0) {
+        clearInterval(smsTimer);
+        smsTimer = null;
+        sendSms.disabled = false;
+        sendSms.textContent = '发送验证码';
+        return;
+      }
+      sendSms.textContent = `${smsLeft}s`;
+    }, 1000);
+  }
   if (sendSms) {
     sendSms.onclick = async () => {
-      const phone = el.querySelector('#bind-phone')?.value?.trim() || '';
-      sendSms.disabled = true;
-      const r = await API.post('/api/phone/send-code', { phone });
-      sendSms.disabled = false;
-      setFlash(r.message || (r.success ? '验证码已发送' : '发送失败'), !r.success);
+      try {
+        const phone = el.querySelector('#bind-phone')?.value?.trim() || '';
+        if (!/^1\d{10}$/.test(phone)) {
+          setFlash('请输入正确的 11 位手机号', true);
+          return;
+        }
+        const token = phoneTs?.getToken?.() || '';
+        if (!token) {
+          setFlash('请先完成人机验证（Turnstile）', true);
+          return;
+        }
+        if (smsLeft > 0) return;
+        sendSms.disabled = true;
+        sendSms.textContent = '发送中…';
+        const r = await API.post('/api/phone/send-code', {
+          phone,
+          turnstile_token: token,
+        });
+        if (!r.success) {
+          sendSms.disabled = false;
+          sendSms.textContent = '发送验证码';
+          setFlash(r.message || '发送失败', true);
+          phoneTs?.reset?.();
+          return;
+        }
+        setFlash(r.message || '验证码已发送');
+        phoneTs?.reset?.();
+        startSmsCountdown(60);
+      } catch (err) {
+        sendSms.disabled = false;
+        sendSms.textContent = '发送验证码';
+        setFlash('发送失败：' + (err?.message || String(err)), true);
+      }
     };
   }
   const bindBtn = el.querySelector('#bind-phone-btn');
@@ -1590,10 +1665,18 @@ async function viewAccount() {
     bindBtn.onclick = async () => {
       const phone = el.querySelector('#bind-phone')?.value?.trim() || '';
       const code = el.querySelector('#bind-code')?.value?.trim() || '';
+      if (!phone || !code) {
+        setFlash('请填写手机号与验证码', true);
+        return;
+      }
+      bindBtn.disabled = true;
       const r = await API.post('/api/phone/bind', { phone, code });
+      bindBtn.disabled = false;
       setFlash(r.message || (r.success ? '绑定成功' : '绑定失败'), !r.success);
-      if (r.success && r.user) state.user = r.user;
-      render();
+      if (r.success && r.user) {
+        state.user = r.user;
+        render();
+      }
     };
   }
 }
