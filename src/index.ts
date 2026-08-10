@@ -1068,6 +1068,29 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
 
+    // 强制 HTTPS（生产域名）：http 访问 301 到 https
+    // Cloudflare 上用 x-forwarded-proto / cf-visitor 判断
+    const host = url.hostname.toLowerCase();
+    const isLocal =
+      host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local');
+    if (!isLocal) {
+      const xfProto = (req.headers.get('x-forwarded-proto') || '').toLowerCase();
+      let cfProto = '';
+      try {
+        const cv = req.headers.get('cf-visitor');
+        if (cv) cfProto = String(JSON.parse(cv)?.scheme || '').toLowerCase();
+      } catch {
+        /* ignore */
+      }
+      const isHttp =
+        url.protocol === 'http:' || xfProto === 'http' || cfProto === 'http';
+      if (isHttp && req.method === 'GET') {
+        const httpsUrl = new URL(req.url);
+        httpsUrl.protocol = 'https:';
+        return Response.redirect(httpsUrl.toString(), 301);
+      }
+    }
+
     if (req.method === 'OPTIONS') return corsPreflight();
 
     try {
