@@ -81,21 +81,45 @@ function setFlash(msg, isErr = false) {
 }
 
 const SKILLS_URL = 'https://aibridge.tanstudio.me/skills/SKILLS.md';
-const SKILLS_PROMPT = `请打开并严格按照 SKILLS 说明操作：${SKILLS_URL}`;
 
-/** 给 AI 用的 SKILLS：下载 + 一键复制短提示词 */
+/** 组装发给 AI 的提示词（含 SKILLS 链接 + 当前用户 API Key） */
+function buildSkillsPrompt(apiKey) {
+  const keyLine = apiKey
+    ? `我的 API Key：${apiKey}`
+    : '我的 API Key：（请先在网站登录后重新复制提示词）';
+  return [
+    `请打开并严格按照 SKILLS 说明操作：${SKILLS_URL}`,
+    keyLine,
+    '请用上述 Key 连接 AIBridge，按 SKILLS 下载/运行本地 Agent，并与我当前项目互通。',
+  ].join('\n');
+}
+
+/** 给 AI 用的 SKILLS：仅一键复制提示词（含 API Key） */
 function skillsBlock() {
   return `
     <section class="skills-block liquid-glass">
       <h3 style="margin:0;font-size:1.05rem">SKILLS（给 AI）</h3>
       <p style="margin:0;color:var(--text-dim);font-size:0.9rem;line-height:1.55">
-        下载说明或复制提示词发给 AI，并附上 API Key 与项目名即可接入。
+        一键复制提示词发给 AI（已含 SKILLS 链接与你的 API Key）。登录后复制最完整。
       </p>
       <div class="skills-actions">
-        <a class="btn btn-primary" href="/skills/SKILLS.md" download="SKILLS.md" style="text-decoration:none">下载 SKILLS.md</a>
-        <button type="button" class="btn" id="copy-skills-prompt">复制提示词</button>
+        <button type="button" class="btn btn-primary" id="copy-skills-prompt">复制提示词给 AI</button>
       </div>
     </section>`;
+}
+
+async function resolveApiKeyForCopy() {
+  if (state.user?.api_key) return state.user.api_key;
+  try {
+    const r = await API.get('/api/me');
+    if (r.success && (r.user || r.data)) {
+      state.user = r.user || r.data;
+      return state.user.api_key || '';
+    }
+  } catch {
+    /* not logged in */
+  }
+  return '';
 }
 
 function bindSkillsCopy(root) {
@@ -103,8 +127,13 @@ function bindSkillsCopy(root) {
   if (!btn) return;
   btn.onclick = async () => {
     try {
-      await navigator.clipboard.writeText(SKILLS_PROMPT);
-      setFlash('提示词已复制');
+      const apiKey = await resolveApiKeyForCopy();
+      if (!apiKey) {
+        setFlash('请先登录后再复制（提示词需带上你的 API Key）', true);
+        return;
+      }
+      await navigator.clipboard.writeText(buildSkillsPrompt(apiKey));
+      setFlash('提示词已复制（含 API Key）');
     } catch {
       setFlash('复制失败，请手动复制', true);
     }
@@ -348,7 +377,7 @@ function viewHome() {
         <div class="hero-actions">
           <a class="btn btn-primary" href="#/register" style="text-decoration:none">立即注册</a>
           <a class="btn" href="#/login" style="text-decoration:none">登录</a>
-          <a class="btn" href="#/skills" style="text-decoration:none">下载 SKILLS</a>
+          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>
         </div>
       </section>
       <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px"></div>
@@ -391,18 +420,18 @@ function viewSkills() {
   const el = $(`
     <div class="panel-wide">
       <div class="section-head">
-        <h2>SKILLS 下载</h2>
+        <h2>SKILLS 提示词</h2>
       </div>
       <p style="color:var(--text-dim);margin:0 0 1.25rem;line-height:1.6;max-width:40rem">
-        将说明文件交给 AI，并提供你的 API Key 与项目名，即可连接 AIBridge、轮询消息并回复。
+        登录后点击复制，提示词会带上 SKILLS 链接与你的 API Key，直接发给 AI 即可接入。
       </p>
       ${skillsBlock()}
       <div class="liquid-glass" style="margin-top:1rem">
         <h3 style="margin:0 0 0.5rem;font-size:1rem">接入步骤</h3>
         <ol style="margin:0;padding-left:1.25rem;color:var(--text-dim);line-height:1.7;font-size:0.92rem">
-          <li>注册并登录，在「账号」页复制 API Key</li>
-          <li>创建一个项目，记下项目名称</li>
-          <li>复制提示词或下载 SKILLS.md，连同 Key 与项目名交给 AI</li>
+          <li>注册并登录</li>
+          <li>创建一个项目（可选：在提示词里告诉 AI 项目名）</li>
+          <li>复制提示词发给 AI（已含 Key 与 SKILLS 链接）</li>
           <li>AI 启动本地 Agent 后，在网页项目里发消息即可</li>
         </ol>
       </div>
@@ -518,7 +547,7 @@ async function viewProjects() {
       <div class="section-head">
         <h2>我的项目</h2>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
-          <a class="btn" href="#/skills" style="text-decoration:none">下载 SKILLS</a>
+          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>
           <button type="button" class="btn btn-primary" id="new-p">新建项目</button>
         </div>
       </div>
@@ -1317,7 +1346,7 @@ async function viewAccount() {
       <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0 1rem">
         <button type="button" class="btn" id="copy-key">复制 Key</button>
         <button type="button" class="btn" id="rotate-key">轮换 Key</button>
-        <a class="btn" href="#/skills" style="text-decoration:none">下载 SKILLS</a>
+        <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>
       </div>
       ${
         state.commercial
