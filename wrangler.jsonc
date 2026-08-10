@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "routes": [
-    { "pattern": "aibridge.tanstudio.me/*", "zone_name": "tanstudio.me" }
+    { "pattern": "aibridge.tanstudio.me", "custom_domain": true }
   ],
   "vars": {
     "APP_NAME": "AIBridge",
