@@ -478,14 +478,17 @@ function viewHome() {
         </div>
       </section>
 
-      <section class="pitch liquid-glass pitch-intro">
-        <h2>像 Codex Mobile 一样调用自家电脑上的 AI</h2>
+      <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px;margin-top:0.5rem"></div>
+
+      <section class="pitch liquid-glass" style="margin-top:1.5rem">
+        <h2>你是否也有这样的痛点？</h2>
         <p>
-          AIBridge 可以像 Codex Mobile 一样，让你随时调用自己电脑上的 AI。
-          适配市面上几乎所有 AI Coding 工具，无需安装庞大环境——只需给 AI 复制一段很短的提示词，AI 就能自行完成接入与操作。
+          出门在外电脑不在身边，用户突然反馈程序出 Bug，自己没法立刻修复，最终耽误了客户，也影响了产品信誉。
         </p>
         <p>
-          只要家里的电脑还开着，你就能在手机或其他移动设备上发指令，远程驱动本地 AI 改代码、修 Bug，极速响应。
+          不必担心：AIBridge 可以像 Codex Mobile 一样，让你随时调用自己电脑上的 AI。
+          适配市面上几乎所有 AI Coding 工具，无需安装庞大环境——只需给 AI 复制一段很短的提示词，AI 就能自行完成接入与操作。
+          只要家里的电脑还开着，就能在手机或其他移动设备上给 AI 发送指令，远程改代码、修 Bug，极速响应。
         </p>
         <p>
           本项目为开源项目，您完全可以部署在自己的服务器上，这样是完全免费的。开源地址：
@@ -496,18 +499,6 @@ function viewHome() {
           您也可以选择使用本平台，我们能够提供更加稳定 · 高效 · 便捷的服务。每月可以免费创建一个项目，或者花费 5 元人民币享受完全无限制服务，同时也享受客服技术支持。
         </p>
       </section>
-
-      <section class="pitch liquid-glass" style="margin-top:1.25rem">
-        <h2>你是否也有这样的痛点？</h2>
-        <p>
-          出门在外电脑不在身边，用户突然反馈程序出 Bug，自己没法立刻修复，最终耽误了客户，也影响了产品信誉。
-        </p>
-        <p>
-          不必担心：用 AIBridge，在世界各地都能和自家 AI 对话——家里电脑开机即可，手机一点，远程改完。
-        </p>
-      </section>
-
-      <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px;margin-top:1.5rem"></div>
     </div>`);
   shell(el);
   const grid = el.querySelector('#feature-grid');
