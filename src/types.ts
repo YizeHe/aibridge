@@ -73,9 +73,14 @@ export type SessionUser = {
   premium_until?: string | null;
 };
 
-/** Commercial features (plan limits, payment) only when COMMERCIAL === "1" */
+/**
+ * Commercial features (plan limits, payment).
+ * Default ON for this product site; set COMMERCIAL=0 to disable (OSS self-host).
+ */
 export function isCommercial(env: { COMMERCIAL?: string }): boolean {
-  return String(env.COMMERCIAL || '') === '1';
+  const v = String(env.COMMERCIAL ?? '1').trim().toLowerCase();
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  return true;
 }
 
 /**

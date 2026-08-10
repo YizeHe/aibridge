@@ -73,17 +73,13 @@ class HttpError extends Error {
 let seeded = false;
 async function seedOnce(env: Env) {
   if (seeded) return;
-  // 商业站自动确保 root 管理员存在
-  if (isCommercial(env)) {
-    try {
-      const pw = (env as { ADMIN_PASSWORD?: string }).ADMIN_PASSWORD || 'ROOT12345678';
-      await ensureAdminSeed(env.DB, pw);
-      seeded = true;
-    } catch {
-      // 表可能尚未 migrate
-    }
-  } else {
+  // 确保 root 管理员存在（正式站 / 自建均可登录后台）
+  try {
+    const pw = env.ADMIN_PASSWORD || 'ROOT12345678';
+    await ensureAdminSeed(env.DB, pw);
     seeded = true;
+  } catch {
+    // 表可能尚未 migrate
   }
 }
 
@@ -582,12 +578,8 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ success: true, project: r.project, created: true });
   }
 
-  // ── Admin: disabled in open-source mode ───────────────
+  // ── Admin (any deployment, role=admin only) ───────────
   if (path.startsWith('/api/admin/')) {
-    if (!commercial) {
-      return json({ success: false, message: 'not found' }, 404);
-    }
-
     const u = await sessionUser(env, req);
     requireUser(u);
     if (u.role !== 'admin') return json({ success: false, message: '需要管理员权限' }, 403);
