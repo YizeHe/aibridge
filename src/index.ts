@@ -387,7 +387,13 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
         .run();
       return json({ success: false, message: send.msg }, 502);
     }
-    return json({ success: true, message: '验证码已发送', cooldown: 60 });
+    return json({
+      success: true,
+      message: '验证码已发送',
+      msg: '验证码已发送',
+      cooldown: 60,
+      retry_after: 60,
+    });
   }
 
   if (method === 'POST' && path === '/api/phone/bind') {

@@ -13,7 +13,8 @@ function smsApiBase(env: Env): string {
 
 export function normalizePhone(phone: string): string | null {
   const p = String(phone || '').trim().replace(/\s|-/g, '');
-  if (!/^1\d{10}$/.test(p)) return null;
+  // 与 yunstorage isValidPhone 一致：1[3-9] 开头
+  if (!/^1[3-9]\d{9}$/.test(p)) return null;
   return p;
 }
 
@@ -31,6 +32,8 @@ export async function sendSmsCode(
     return { ok: false, msg: '短信服务未配置' };
   }
   const base = smsApiBase(env);
+  // sms2 示例：template_code + template_params.code
+  // yunstorage 使用平台模板号 SMS_511520290（名称 gsorg_login）
   const payload: Record<string, unknown> = {
     api_key: env.SMS_API_KEY,
     api_secret: env.SMS_API_SECRET,
@@ -41,7 +44,8 @@ export async function sendSmsCode(
   if (env.SMS_SIGN_NAME) payload.sign_name = env.SMS_SIGN_NAME;
 
   try {
-    const res = await fetch(`${base}/send.php`, {
+    const url = `${base}/send.php`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -50,17 +54,25 @@ export async function sendSmsCode(
     let data: {
       code?: number;
       msg?: string;
-      data?: { success_count?: number };
+      message?: string;
+      data?: { success_count?: number; fail_count?: number; biz_id?: string };
     };
     try {
       data = JSON.parse(text) as typeof data;
     } catch {
-      return { ok: false, msg: `短信接口返回非 JSON (HTTP ${res.status})` };
+      return {
+        ok: false,
+        msg: `短信接口返回非 JSON (HTTP ${res.status}): ${text.slice(0, 120)}`,
+      };
     }
-    if (data.code === 0 && (data.data?.success_count ?? 1) > 0) {
-      return { ok: true, msg: data.msg || '发送成功' };
+    // 平台：code===0 成功
+    if (Number(data.code) === 0 && (data.data?.success_count ?? 1) > 0) {
+      return { ok: true, msg: data.msg || data.message || '验证码已发送' };
     }
-    return { ok: false, msg: data.msg || '短信发送失败' };
+    return {
+      ok: false,
+      msg: data.msg || data.message || `短信发送失败 (code=${data.code})`,
+    };
   } catch (e) {
     return { ok: false, msg: '短信接口异常: ' + (e instanceof Error ? e.message : String(e)) };
   }
