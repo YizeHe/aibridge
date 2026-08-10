@@ -255,6 +255,69 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ success: true, api_key: key });
   }
 
+  // ── Redeem activation code ────────────────────────────
+  if (method === 'POST' && path === '/api/redeem') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const body = await readJson<{ code?: string }>(req);
+    const code = String(body.code || '').trim();
+    if (!code) return json({ success: false, message: '请输入激活码' }, 400);
+
+    const row = await env.DB.prepare(
+      `SELECT code, days, max_uses, used_count, enabled FROM redeem_codes WHERE code = ? COLLATE NOCASE`
+    )
+      .bind(code)
+      .first<{
+        code: string;
+        days: number;
+        max_uses: number;
+        used_count: number;
+        enabled: number;
+      }>();
+    if (!row || !row.enabled) return json({ success: false, message: '激活码无效' }, 400);
+    if (row.max_uses > 0 && row.used_count >= row.max_uses) {
+      return json({ success: false, message: '激活码已用完' }, 400);
+    }
+
+    const used = await env.DB.prepare(
+      `SELECT id FROM redeem_uses WHERE code = ? AND user_id = ?`
+    )
+      .bind(row.code, u.id)
+      .first();
+    if (used) return json({ success: false, message: '该激活码本账号已使用过' }, 400);
+
+    const full = await getUserById(env.DB, u.id);
+    if (!full) return json({ success: false, message: '用户不存在' }, 404);
+
+    const now = Date.now();
+    let base = now;
+    if (full.plan === 'premium' && full.premium_until) {
+      const t = Date.parse(full.premium_until);
+      if (!Number.isNaN(t) && t > now) base = t;
+    }
+    const until = new Date(base + Math.max(1, Number(row.days) || 2) * 86400000).toISOString();
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO redeem_uses (code, user_id) VALUES (?, ?)`
+      ).bind(row.code, u.id),
+      env.DB.prepare(
+        `UPDATE redeem_codes SET used_count = used_count + 1 WHERE code = ?`
+      ).bind(row.code),
+      env.DB.prepare(
+        `UPDATE users SET plan = 'premium', premium_until = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+      ).bind(until, u.id),
+    ]);
+
+    const updated = await getUserById(env.DB, u.id);
+    return json({
+      success: true,
+      message: `激活成功，会员已延长 ${row.days} 天`,
+      user: updated ? publicUser(updated) : publicUser(u),
+      premium_until: until,
+    });
+  }
+
   // ── Projects (session) ────────────────────────────────
   if (method === 'GET' && path === '/api/projects') {
     const u = await sessionUser(env, req);

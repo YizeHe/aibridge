@@ -80,28 +80,59 @@ function setFlash(msg, isErr = false) {
   state.notice = isErr ? '' : msg;
 }
 
-/** 给 AI 用的 SKILLS 下载区 */
+/** 给 AI 用的 SKILLS 下载区（仅一份 SKILLS.md） */
 function skillsBlock(compact = false) {
   return `
-    <section class="skills-block liquid-glass" data-liquid-glass data-preset="soft" data-scale="32" data-radius="22">
-      <h3 style="margin:0;font-size:1.05rem">下载 SKILLS（给 AI 用）</h3>
+    <section class="skills-block liquid-glass">
+      <h3 style="margin:0;font-size:1.05rem">下载 SKILLS</h3>
       <p style="margin:0;color:var(--text-dim);font-size:0.9rem;line-height:1.55">
         把说明文件交给 AI，并附上你的 API Key 与项目名称，即可自动连接本站并开始互通。
       </p>
       <div class="skills-actions">
         <a class="btn btn-primary" href="/skills/SKILLS.md" download="SKILLS.md" style="text-decoration:none">下载 SKILLS.md</a>
-        <a class="btn" href="/skills/SKILL.md" download="SKILL.md" style="text-decoration:none">下载 SKILL.md</a>
-        <a class="btn btn-ghost" href="/skills/SKILLS.md" target="_blank" rel="noopener" style="text-decoration:none">在线查看</a>
+        <a class="btn" href="/skills/SKILLS.md" target="_blank" rel="noopener" style="text-decoration:none">在线查看</a>
       </div>
-      ${
-        compact
-          ? ''
-          : `<p style="margin:0;font-size:0.82rem;color:var(--text-faint);line-height:1.5">
-        也可直接把链接发给 AI：
-        <span class="mono">https://aibridge.tanstudio.me/skills/SKILLS.md</span>
-      </p>`
-      }
     </section>`;
+}
+
+function backLink(href = '#/', label = '返回') {
+  return `<a class="page-back" href="${href}">← ${label}</a>`;
+}
+
+function showFormModal(host, { title, fields, submitText, onSubmit }) {
+  host.innerHTML = `
+    <div class="modal-mask" id="form-modal">
+      <div class="modal-card">
+        <h3>${escapeHtml(title)}</h3>
+        <form id="modal-form">
+          ${fields
+            .map(
+              (f) => `
+            <label class="field">${escapeHtml(f.label)}
+              <input name="${escapeHtml(f.name)}" type="${f.type || 'text'}"
+                ${f.required ? 'required' : ''}
+                ${f.placeholder ? `placeholder="${escapeHtml(f.placeholder)}"` : ''}
+                ${f.value ? `value="${escapeHtml(f.value)}"` : ''} />
+            </label>`
+            )
+            .join('')}
+          <div class="modal-actions">
+            <button type="button" class="btn" id="modal-cancel">取消</button>
+            <button type="submit" class="btn btn-primary">${escapeHtml(submitText || '确定')}</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+  host.querySelector('#modal-cancel').onclick = () => {
+    host.innerHTML = '';
+  };
+  host.querySelector('#modal-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd.entries());
+    await onSubmit(data);
+    host.innerHTML = '';
+  };
 }
 
 async function ensureUser() {
@@ -134,7 +165,11 @@ async function loadPlans() {
   }
 }
 
-function shell(content) {
+/**
+ * @param {HTMLElement} content
+ * @param {{ backHref?: string, backLabel?: string } | null} opts
+ */
+function shell(content, opts = null) {
   if (state.unsubGrid) {
     state.unsubGrid();
     state.unsubGrid = null;
@@ -148,6 +183,13 @@ function shell(content) {
     </header>`);
   const page = document.createElement('div');
   page.className = 'page';
+  if (opts && opts.backHref) {
+    const back = document.createElement('a');
+    back.className = 'page-back';
+    back.href = opts.backHref;
+    back.textContent = `← ${opts.backLabel || '返回'}`;
+    page.appendChild(back);
+  }
   page.appendChild(content);
   app.append(header, page);
 
@@ -222,7 +264,6 @@ function viewHome() {
         <h1>浏览器与本地 AI Agent 的云端互通桥</h1>
         <p>
           注册账号、创建项目、用 API Key 连接本地 Agent，在网页里对话。
-          正式站点：<a href="https://aibridge.tanstudio.me">aibridge.tanstudio.me</a>
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="#/register" style="text-decoration:none">立即注册</a>
@@ -254,19 +295,15 @@ function viewHome() {
   ];
   for (const f of features) {
     const card = document.createElement('article');
-    card.className = 'liquid-glass project-card feature-card';
-    card.dataset.liquidGlass = '';
-    card.dataset.preset = 'soft';
-    card.dataset.scale = '42';
-    card.dataset.radius = '22';
+    // 轻量毛玻璃，不用重 refraction 避免裁字
+    card.className = 'liquid-glass feature-card';
     card.innerHTML = `
       <h3>${escapeHtml(f.title)}</h3>
       <p>${escapeHtml(f.desc)}</p>
-      <div class="meta"><span>${escapeHtml(f.meta[0])}</span><span>${escapeHtml(f.meta[1])}</span></div>`;
+      <div class="meta"><span>${escapeHtml(f.meta[0])}</span><span class="mono">${escapeHtml(f.meta[1])}</span></div>`;
     grid.appendChild(card);
   }
   state.unsubGrid = watchProjectGrid(grid);
-  enhanceGlass(el);
 }
 
 function viewSkills() {
@@ -276,22 +313,20 @@ function viewSkills() {
         <h2>SKILLS 下载</h2>
       </div>
       <p style="color:var(--text-dim);margin:0 0 1.25rem;line-height:1.6;max-width:40rem">
-        将说明文件交给 AI（如 Cursor / Claude / Grok），并提供你的 API Key 与项目名，
-        AI 即可按文档连接 AIBridge、轮询消息并回复。
+        将说明文件交给 AI，并提供你的 API Key 与项目名，即可连接 AIBridge、轮询消息并回复。
       </p>
       ${skillsBlock(false)}
-      <div class="liquid-glass" data-liquid-glass data-preset="soft" data-scale="30" data-radius="22" style="margin-top:1rem">
-        <h3 style="margin:0 0 0.5rem;font-size:1rem">接入步骤简述</h3>
+      <div class="liquid-glass" style="margin-top:1rem">
+        <h3 style="margin:0 0 0.5rem;font-size:1rem">接入步骤</h3>
         <ol style="margin:0;padding-left:1.25rem;color:var(--text-dim);line-height:1.7;font-size:0.92rem">
-          <li>在本站注册并登录，于「账号」页复制 API Key</li>
+          <li>注册并登录，在「账号」页复制 API Key</li>
           <li>创建一个项目，记下项目名称</li>
           <li>下载 SKILLS.md，连同 Key 与项目名交给 AI</li>
-          <li>AI 按文档启动本地 Agent，你在网页项目里发消息即可</li>
+          <li>AI 启动本地 Agent 后，在网页项目里发消息即可</li>
         </ol>
       </div>
     </div>`);
-  shell(el);
-  enhanceGlass(el);
+  shell(el, { backHref: '#/', backLabel: '返回首页' });
 }
 
 function viewLogin() {
@@ -315,7 +350,7 @@ function viewLogin() {
     <p style="margin:1rem 0 0;font-size:0.88rem;color:var(--text-dim)">
       没有账号？ <a href="#/register">注册</a>
     </p>`;
-  shell(el);
+  shell(el, { backHref: '#/', backLabel: '返回首页' });
   el.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -334,7 +369,6 @@ function viewLogin() {
     location.hash = '#/app';
     render();
   };
-  enhanceGlass(el);
 }
 
 function viewRegister() {
@@ -359,7 +393,7 @@ function viewRegister() {
     <p style="margin:1rem 0 0;font-size:0.88rem;color:var(--text-dim)">
       已有账号？ <a href="#/login">登录</a>
     </p>`;
-  shell(el);
+  shell(el, { backHref: '#/', backLabel: '返回首页' });
   let cap = { token: '', slots: [] };
   mountIconCaptcha(el.querySelector('#captcha'))
     .then((c) => {
@@ -389,7 +423,6 @@ function viewRegister() {
     location.hash = '#/app';
     render();
   };
-  enhanceGlass(el);
 }
 
 async function viewProjects() {
@@ -410,31 +443,29 @@ async function viewProjects() {
         </div>
       </div>
       <div class="project-grid" id="pgrid"></div>
-      <div id="empty" class="empty liquid-glass" data-liquid-glass data-preset="soft" data-scale="30" style="${state.projects.length ? 'display:none' : ''}">
+      <div id="empty" class="empty liquid-glass" style="${state.projects.length ? 'display:none' : ''}">
         <p style="margin:0 0 0.75rem">还没有项目。创建一个，即可与本地 Agent 对话。</p>
         <button type="button" class="btn btn-primary" id="new-p2">创建项目</button>
       </div>
       <div style="margin-top:1.5rem">${skillsBlock(true)}</div>
+      <div id="modal-host"></div>
     </div>`);
-  shell(el);
+  shell(el, { backHref: '#/', backLabel: '返回首页' });
   const grid = el.querySelector('#pgrid');
+  const modalHost = el.querySelector('#modal-host');
   grid.innerHTML = '';
   for (const p of state.projects) {
     const card = document.createElement('article');
     card.className = 'liquid-glass project-card';
-    card.dataset.liquidGlass = '';
-    card.dataset.preset = 'crystal';
-    card.dataset.scale = '40';
-    card.dataset.radius = '22';
     card.innerHTML = `
       <h3>${escapeHtml(p.name)}</h3>
       <p>${escapeHtml(p.description || '暂无描述')}</p>
       <div class="meta">
         <span class="mono">${escapeHtml(p.slug)}</span>
-        <div class="actions">
-          <button type="button" data-open="${p.id}">打开</button>
-          <button type="button" data-del="${p.id}">删除</button>
-        </div>
+      </div>
+      <div class="actions">
+        <button type="button" data-open="${p.id}">打开</button>
+        <button type="button" data-del="${p.id}">删除</button>
       </div>`;
     card.addEventListener('click', (ev) => {
       if (ev.target.closest('[data-del]')) return;
@@ -445,17 +476,28 @@ async function viewProjects() {
     grid.appendChild(card);
   }
 
-  const create = async () => {
-    const name = prompt('项目名称');
-    if (!name) return;
-    const r = await API.post('/api/projects', { name, description: '' });
-    if (!r.success) {
-      setFlash(r.message || '创建失败', true);
-      render();
-      return;
-    }
-    location.hash = `#/chat/${r.project.id}`;
-    render();
+  const create = () => {
+    showFormModal(modalHost, {
+      title: '新建项目',
+      submitText: '创建',
+      fields: [
+        { name: 'name', label: '项目名称', required: true, placeholder: '例如 cloud-demo' },
+        { name: 'description', label: '描述（可选）', placeholder: '一句话说明' },
+      ],
+      onSubmit: async (data) => {
+        const r = await API.post('/api/projects', {
+          name: data.name,
+          description: data.description || '',
+        });
+        if (!r.success) {
+          setFlash(r.message || '创建失败', true);
+          render();
+          return;
+        }
+        location.hash = `#/chat/${r.project.id}`;
+        render();
+      },
+    });
   };
   el.querySelector('#new-p').onclick = create;
   el.querySelector('#new-p2')?.addEventListener('click', create);
@@ -470,7 +512,6 @@ async function viewProjects() {
     };
   });
   state.unsubGrid = watchProjectGrid(grid);
-  enhanceGlass(el);
 }
 
 function langForPath(path) {
@@ -595,7 +636,7 @@ async function viewChat(id) {
       </div>
       <div id="modal-host"></div>
     </div>`);
-  shell(el);
+  shell(el, { backHref: '#/app', backLabel: '返回项目列表' });
 
   const ws = el.querySelector('#ws');
   const log = el.querySelector('#log');
@@ -923,19 +964,53 @@ async function viewChat(id) {
     updateShellClass();
     if (filesOpen) await refreshFiles();
   };
-  el.querySelector('#btn-new-file').onclick = async () => {
-    const path = prompt('文件路径（如 src/main.go 或 README.md）');
-    if (!path) return;
-    const r = await API.request(`/api/projects/${id}/files`, {
-      method: 'PUT',
-      body: { path, content: '', encoding: 'utf8' },
+  el.querySelector('#btn-new-file').onclick = () => {
+    showFormModal(modalHost, {
+      title: '新建文件',
+      submitText: '创建并打开',
+      fields: [
+        {
+          name: 'path',
+          label: '文件路径',
+          required: true,
+          placeholder: '例如 src/main.go 或 README.md',
+        },
+        {
+          name: 'content',
+          label: '初始内容（可选）',
+          placeholder: '可留空',
+        },
+      ],
+      onSubmit: async (data) => {
+        const r = await API.request(`/api/projects/${id}/files`, {
+          method: 'PUT',
+          body: {
+            path: data.path,
+            content: data.content || '',
+            encoding: 'utf8',
+          },
+        });
+        if (!r.success) {
+          setFlash(r.message || '创建失败', true);
+          return;
+        }
+        await refreshFiles();
+        openFilePath(r.file.path);
+      },
     });
-    if (!r.success) {
-      setFlash(r.message || '创建失败', true);
-      return;
+    // content field as textarea
+    const form = modalHost.querySelector('#modal-form');
+    const contentLabel = form?.querySelector('input[name="content"]')?.closest('label');
+    if (contentLabel) {
+      const input = contentLabel.querySelector('input');
+      const ta = document.createElement('textarea');
+      ta.name = 'content';
+      ta.rows = 6;
+      ta.placeholder = '可留空，创建后可在编辑器中修改';
+      ta.style.cssText =
+        'width:100%;border:1px solid var(--line);border-radius:12px;padding:0.65rem 0.8rem;background:color-mix(in srgb, var(--bg) 70%, #fff);resize:vertical';
+      input.replaceWith(ta);
     }
-    await refreshFiles();
-    openFilePath(r.file.path);
   };
   el.querySelector('#ed-save').onclick = () => saveOpenFile();
   el.querySelector('#ed-close').onclick = () => {
@@ -1041,7 +1116,7 @@ async function viewAdmin() {
   }
   const users = r.users || [];
   const el = $(`
-    <div class="panel-wide liquid-glass" data-liquid-glass data-preset="soft" data-scale="30" data-radius="22">
+    <div class="panel-wide liquid-glass">
       <div class="section-head" style="margin-bottom:0.75rem">
         <h2 style="margin:0">用户管理</h2>
         <span style="color:var(--text-dim);font-size:0.85rem">共 ${users.length} 人</span>
@@ -1063,7 +1138,7 @@ async function viewAdmin() {
         </table>
       </div>
     </div>`);
-  shell(el);
+  shell(el, { backHref: '#/app', backLabel: '返回项目' });
   const body = el.querySelector('#admin-body');
   for (const user of users) {
     const tr = document.createElement('tr');
@@ -1119,10 +1194,17 @@ async function viewAdmin() {
       pwBtn.style.cssText = 'padding:0.2rem 0.45rem;font-size:0.75rem';
       pwBtn.textContent = '改密';
       pwBtn.onclick = async () => {
-        const pw = prompt(`为 ${user.username} 设置新密码（至少 8 位）`);
-        if (!pw) return;
-        const res = await API.post(`/api/admin/users/${user.id}/password`, { password: pw });
-        setFlash(res.success ? '密码已更新' : res.message || '失败', !res.success);
+        showFormModal(document.body.appendChild(document.createElement('div')), {
+          title: `修改 ${user.username} 的密码`,
+          submitText: '保存',
+          fields: [{ name: 'password', label: '新密码（至少 8 位）', type: 'password', required: true }],
+          onSubmit: async (data) => {
+            const res = await API.post(`/api/admin/users/${user.id}/password`, {
+              password: data.password,
+            });
+            setFlash(res.success ? '密码已更新' : res.message || '失败', !res.success);
+          },
+        });
       };
       actions.appendChild(pwBtn);
     } else {
@@ -1130,7 +1212,6 @@ async function viewAdmin() {
     }
     body.appendChild(tr);
   }
-  enhanceGlass(el);
 }
 
 async function viewAccount() {
@@ -1146,7 +1227,7 @@ async function viewAccount() {
       ? `已开通${user.premium_until ? ' · 至 ' + escapeHtml(String(user.premium_until).slice(0, 10)) : ''}`
       : '未开通';
   const el = $(`
-    <div class="panel-wide liquid-glass" data-liquid-glass data-preset="soft" data-scale="34" data-radius="24">
+    <div class="panel-wide liquid-glass">
       <h2 style="margin:0 0 1rem">账号</h2>
       <div class="field">用户名<div style="color:var(--text);font-weight:600">${escapeHtml(user.username)}</div></div>
       <div class="field">API Key
@@ -1162,7 +1243,15 @@ async function viewAccount() {
           ? `<div class="field">会员
             <div>${memberLabel}</div>
           </div>
-          <a class="btn btn-primary" href="#/billing" style="text-decoration:none">开通 / 续费</a>`
+          <a class="btn btn-primary" href="#/billing" style="text-decoration:none">开通 / 续费</a>
+          <hr style="border:0;border-top:1px solid var(--line);margin:1.25rem 0" />
+          <h3 style="margin:0 0 0.75rem;font-size:1rem">激活码</h3>
+          <form id="redeem">
+            <label class="field">输入激活码
+              <input name="code" required placeholder="例如 RemoteAiGENT" autocomplete="off" />
+            </label>
+            <button class="btn" type="submit">兑换</button>
+          </form>`
           : ''
       }
       <hr style="border:0;border-top:1px solid var(--line);margin:1.25rem 0" />
@@ -1173,7 +1262,7 @@ async function viewAccount() {
         <button class="btn" type="submit">更新密码</button>
       </form>
     </div>`);
-  shell(el);
+  shell(el, { backHref: '#/app', backLabel: '返回项目' });
   el.querySelector('#copy-key').onclick = async () => {
     try {
       await navigator.clipboard.writeText(user.api_key || '');
@@ -1200,7 +1289,17 @@ async function viewAccount() {
     setFlash(r.message || (r.success ? '密码已更新' : '更新失败'), !r.success);
     render();
   };
-  enhanceGlass(el);
+  const redeemForm = el.querySelector('#redeem');
+  if (redeemForm) {
+    redeemForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const r = await API.post('/api/redeem', { code: fd.get('code') });
+      setFlash(r.message || (r.success ? '激活成功' : '激活失败'), !r.success);
+      if (r.success && r.user) state.user = r.user;
+      render();
+    };
+  }
 }
 
 async function viewBilling() {
@@ -1225,11 +1324,11 @@ async function viewBilling() {
       <div class="section-head"><h2>会员</h2></div>
       <p style="color:var(--text-dim);margin:0 0 1.25rem;max-width:36rem;line-height:1.6">
         自助开通会员。支付成功后自动延长有效期。月付 5 元，年付 50 元。
-        开通后可创建不限数量项目。
+        开通后可创建不限数量项目。也可在账号页使用激活码兑换。
       </p>
       <div class="price-grid" id="prices"></div>
     </div>`);
-  shell(el);
+  shell(el, { backHref: '#/account', backLabel: '返回账号' });
   const grid = el.querySelector('#prices');
   for (const p of plans) {
     const period =
@@ -1240,15 +1339,11 @@ async function viewBilling() {
           : p.period || '';
     const card = document.createElement('article');
     card.className = 'liquid-glass price-card';
-    card.dataset.liquidGlass = '';
-    card.dataset.preset = 'soft';
-    card.dataset.scale = '38';
-    card.dataset.radius = '22';
     card.innerHTML = `
-      <h3 style="margin:0">${escapeHtml(p.name || p.id)}</h3>
+      <h3>${escapeHtml(p.name || p.id)}</h3>
       <div class="price">${Number(p.price).toFixed(0)}<span> 元 / ${escapeHtml(period)}</span></div>
-      <p style="margin:0;color:var(--text-dim);font-size:0.9rem;line-height:1.5">会员有效期内项目数量不限。</p>
-      <div style="display:flex;flex-wrap:wrap;gap:0.45rem;margin-top:0.35rem">
+      <p>会员有效期内项目数量不限。</p>
+      <div class="pay-row">
         <button type="button" class="btn btn-primary" data-plan="${p.id}" data-pay="alipay">支付宝</button>
         <button type="button" class="btn" data-plan="${p.id}" data-pay="wxpay">微信支付</button>
       </div>`;
@@ -1274,7 +1369,6 @@ async function viewBilling() {
       render();
     };
   });
-  enhanceGlass(el);
 }
 
 async function render() {
