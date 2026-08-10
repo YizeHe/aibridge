@@ -17,6 +17,8 @@ export type Env = {
   NOTIFY_URL?: string;
   ADMIN_PASSWORD?: string;
   SECRET?: string;
+  TURNSTILE_SITEKEY?: string;
+  TURNSTILE_SECRET?: string;
 };
 
 export type UserRow = {

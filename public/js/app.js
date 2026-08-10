@@ -2,7 +2,6 @@
  * AIBridge 前端 SPA — 中文界面、液态玻璃项目卡片、明暗主题、商业会员
  */
 import { API } from './api.js';
-import { mountIconCaptcha } from './captcha.js';
 import {
   initWorld,
   watchProjectGrid,
@@ -17,6 +16,7 @@ const state = {
   messages: [],
   plans: null,
   commercial: false,
+  turnstileSiteKey: '',
   error: '',
   notice: '',
   unsubGrid: null,
@@ -80,19 +80,90 @@ function setFlash(msg, isErr = false) {
   state.notice = isErr ? '' : msg;
 }
 
-/** 给 AI 用的 SKILLS 下载区（仅一份 SKILLS.md） */
-function skillsBlock(compact = false) {
+const SKILLS_URL = 'https://aibridge.tanstudio.me/skills/SKILLS.md';
+const SKILLS_PROMPT = `请打开并严格按照 SKILLS 说明操作：${SKILLS_URL}`;
+
+/** 给 AI 用的 SKILLS：下载 + 一键复制短提示词 */
+function skillsBlock() {
   return `
     <section class="skills-block liquid-glass">
-      <h3 style="margin:0;font-size:1.05rem">下载 SKILLS</h3>
+      <h3 style="margin:0;font-size:1.05rem">SKILLS（给 AI）</h3>
       <p style="margin:0;color:var(--text-dim);font-size:0.9rem;line-height:1.55">
-        把说明文件交给 AI，并附上你的 API Key 与项目名称，即可自动连接本站并开始互通。
+        下载说明或复制提示词发给 AI，并附上 API Key 与项目名即可接入。
       </p>
       <div class="skills-actions">
         <a class="btn btn-primary" href="/skills/SKILLS.md" download="SKILLS.md" style="text-decoration:none">下载 SKILLS.md</a>
-        <a class="btn" href="/skills/SKILLS.md" target="_blank" rel="noopener" style="text-decoration:none">在线查看</a>
+        <button type="button" class="btn" id="copy-skills-prompt">复制提示词</button>
       </div>
     </section>`;
+}
+
+function bindSkillsCopy(root) {
+  const btn = root.querySelector('#copy-skills-prompt');
+  if (!btn) return;
+  btn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(SKILLS_PROMPT);
+      setFlash('提示词已复制');
+    } catch {
+      setFlash('复制失败，请手动复制', true);
+    }
+  };
+}
+
+function loadTurnstileScript() {
+  return new Promise((resolve, reject) => {
+    if (window.turnstile) return resolve();
+    const existing = document.getElementById('cf-turnstile-script');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      return;
+    }
+    const s = document.createElement('script');
+    s.id = 'cf-turnstile-script';
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Turnstile 脚本加载失败'));
+    document.head.appendChild(s);
+  });
+}
+
+async function mountTurnstile(container, siteKey) {
+  container.innerHTML = '';
+  if (!siteKey) {
+    container.innerHTML =
+      '<div class="field" style="color:var(--danger)">未配置 Turnstile Site Key</div>';
+    return { getToken: () => '' };
+  }
+  await loadTurnstileScript();
+  const holder = document.createElement('div');
+  container.appendChild(holder);
+  let token = '';
+  const widgetId = window.turnstile.render(holder, {
+    sitekey: siteKey,
+    theme: getTheme() === 'dark' ? 'dark' : 'light',
+    callback: (t) => {
+      token = t || '';
+    },
+    'expired-callback': () => {
+      token = '';
+    },
+    'error-callback': () => {
+      token = '';
+    },
+  });
+  return {
+    getToken: () => token,
+    reset: () => {
+      token = '';
+      try {
+        window.turnstile.reset(widgetId);
+      } catch {
+        /* */
+      }
+    },
+  };
 }
 
 function backLink(href = '#/', label = '返回') {
@@ -158,10 +229,19 @@ async function loadPlans() {
     if (r.success) {
       state.commercial = !!r.commercial;
       state.plans = r.plans || [];
+      state.turnstileSiteKey = r.turnstile_site_key || state.turnstileSiteKey || '';
     }
   } catch {
     state.commercial = false;
     state.plans = null;
+  }
+  if (!state.turnstileSiteKey) {
+    try {
+      const c = await API.get('/api/config');
+      if (c.success) state.turnstileSiteKey = c.turnstile_site_key || '';
+    } catch {
+      /* */
+    }
   }
 }
 
@@ -272,9 +352,10 @@ function viewHome() {
         </div>
       </section>
       <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px"></div>
-      <div style="margin-top:1.75rem">${skillsBlock(false)}</div>
+      <div style="margin-top:1.75rem">${skillsBlock()}</div>
     </div>`);
   shell(el);
+  bindSkillsCopy(el);
   const grid = el.querySelector('#feature-grid');
   const features = [
     {
@@ -315,18 +396,19 @@ function viewSkills() {
       <p style="color:var(--text-dim);margin:0 0 1.25rem;line-height:1.6;max-width:40rem">
         将说明文件交给 AI，并提供你的 API Key 与项目名，即可连接 AIBridge、轮询消息并回复。
       </p>
-      ${skillsBlock(false)}
+      ${skillsBlock()}
       <div class="liquid-glass" style="margin-top:1rem">
         <h3 style="margin:0 0 0.5rem;font-size:1rem">接入步骤</h3>
         <ol style="margin:0;padding-left:1.25rem;color:var(--text-dim);line-height:1.7;font-size:0.92rem">
           <li>注册并登录，在「账号」页复制 API Key</li>
           <li>创建一个项目，记下项目名称</li>
-          <li>下载 SKILLS.md，连同 Key 与项目名交给 AI</li>
+          <li>复制提示词或下载 SKILLS.md，连同 Key 与项目名交给 AI</li>
           <li>AI 启动本地 Agent 后，在网页项目里发消息即可</li>
         </ol>
       </div>
     </div>`);
   shell(el, { backHref: '#/', backLabel: '返回首页' });
+  bindSkillsCopy(el);
 }
 
 function viewLogin() {
@@ -371,13 +453,10 @@ function viewLogin() {
   };
 }
 
-function viewRegister() {
+async function viewRegister() {
+  await loadPlans();
   const el = document.createElement('div');
   el.className = 'panel liquid-glass';
-  el.dataset.liquidGlass = '';
-  el.dataset.preset = 'soft';
-  el.dataset.scale = '36';
-  el.dataset.radius = '24';
   el.innerHTML = `
     <h1 style="margin:0 0 1rem;font-size:1.35rem">注册</h1>
     <form id="f">
@@ -387,34 +466,35 @@ function viewRegister() {
       <label class="field">密码（至少 8 位）
         <input name="password" type="password" autocomplete="new-password" required minlength="8" />
       </label>
-      <div id="captcha" class="field"></div>
+      <div id="turnstile" class="field" style="min-height:70px"></div>
       <button class="btn btn-primary" type="submit" style="width:100%">注册</button>
     </form>
     <p style="margin:1rem 0 0;font-size:0.88rem;color:var(--text-dim)">
       已有账号？ <a href="#/login">登录</a>
     </p>`;
   shell(el, { backHref: '#/', backLabel: '返回首页' });
-  let cap = { token: '', slots: [] };
-  mountIconCaptcha(el.querySelector('#captcha'))
-    .then((c) => {
-      cap = c;
-    })
-    .catch((err) => {
-      setFlash(err.message || '验证码加载失败', true);
-      render();
-    });
+  let ts = { getToken: () => '', reset: () => {} };
+  try {
+    ts = await mountTurnstile(el.querySelector('#turnstile'), state.turnstileSiteKey);
+  } catch (err) {
+    setFlash(err.message || '人机验证加载失败', true);
+  }
   el.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const token = ts.getToken();
+    if (!token) {
+      setFlash('请先完成人机验证', true);
+      return;
+    }
     const r = await API.post('/api/auth/register', {
       username: fd.get('username'),
       password: fd.get('password'),
-      captcha_token: cap.token,
-      captcha_slots: cap.slots,
+      turnstile_token: token,
     });
     if (!r.success) {
       setFlash(r.message || '注册失败', true);
-      render();
+      ts.reset();
       return;
     }
     if (r.session) API.setToken(r.session);
@@ -447,10 +527,11 @@ async function viewProjects() {
         <p style="margin:0 0 0.75rem">还没有项目。创建一个，即可与本地 Agent 对话。</p>
         <button type="button" class="btn btn-primary" id="new-p2">创建项目</button>
       </div>
-      <div style="margin-top:1.5rem">${skillsBlock(true)}</div>
+      <div style="margin-top:1.5rem">${skillsBlock()}</div>
       <div id="modal-host"></div>
     </div>`);
   shell(el, { backHref: '#/', backLabel: '返回首页' });
+  bindSkillsCopy(el);
   const grid = el.querySelector('#pgrid');
   const modalHost = el.querySelector('#modal-host');
   grid.innerHTML = '';

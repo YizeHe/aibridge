@@ -50,7 +50,8 @@ export async function createProject(
     if (!isPremiumActive(user) && count >= 1) {
       return {
         ok: false,
-        error: '当前套餐仅可创建 1 个项目',
+        error:
+          '当前套餐仅可创建 1 个项目。请点击右上角「会员」开通会员后无限制使用，每月 5 元，无自动续费。',
         status: 403,
       };
     }

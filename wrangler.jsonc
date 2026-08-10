@@ -11,7 +11,8 @@
   "vars": {
     "APP_NAME": "AIBridge",
     "SITE_URL": "https://aibridge.tanstudio.me",
-    "COMMERCIAL": "1"
+    "COMMERCIAL": "1",
+    "TURNSTILE_SITEKEY": "0x4AAAAAADr4uCxdUJ2Co5YI"
   },
   "d1_databases": [
     {

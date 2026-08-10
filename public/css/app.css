@@ -376,14 +376,18 @@ html.dark .lg-surface {
 }
 
 /* Always pad glass cards so text stays clear of rounded corners */
+/* 文字不动：卡片外壳向外扩约 10%（更大内边距），避免文字贴边/溢出 */
 .liquid-glass.panel,
 .liquid-glass.panel-wide,
 .liquid-glass.price-card,
 .liquid-glass.project-card,
 .liquid-glass.feature-card,
 .liquid-glass.skills-block {
-  padding: 1.35rem 1.5rem;
+  padding: 1.55rem 1.7rem;
   overflow: visible;
+  box-sizing: border-box;
+  /* 相对原内容区外扩：左右多出约 10% 视觉留白 */
+  min-width: 0;
 }
 .liquid-glass.panel > .lg-content,
 .liquid-glass.panel-wide > .lg-content,
@@ -393,6 +397,7 @@ html.dark .lg-surface {
 .liquid-glass.skills-block > .lg-content {
   padding: 0;
   height: auto;
+  overflow: visible;
 }
 
 /* Project grid — dynamic columns via JS sets --cols / --gap / --card-w */
@@ -439,7 +444,11 @@ html.dark .lg-surface {
   line-height: 1.35;
   text-align: center;
   width: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   overflow: visible;
+  box-sizing: border-box;
 }
 
 .project-card p,
@@ -451,8 +460,12 @@ html.dark .lg-surface {
   line-height: 1.55;
   text-align: center;
   width: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   overflow: visible;
   flex: 0 1 auto;
+  box-sizing: border-box;
 }
 
 .project-card .meta,

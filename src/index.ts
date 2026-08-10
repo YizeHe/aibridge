@@ -2,7 +2,6 @@
  * AI Bridge — Cloudflare Worker
  * Domain: aibridge.tanstudio.me
  */
-import { createChallenge, verifyChallenge } from '@yunstorage/icon-captcha';
 import type { Env } from './types';
 import { isCommercial } from './types';
 import {
@@ -20,7 +19,7 @@ import {
   SESSION_TTL_SEC,
   verifyPassword,
 } from './auth';
-import { secrets, sha256Hex } from './crypto';
+
 import {
   clearCookie,
   corsPreflight,
@@ -89,20 +88,14 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   const method = req.method.toUpperCase();
   const commercial = isCommercial(env);
 
-  // ── Captcha ───────────────────────────────────────────
-  if (method === 'GET' && path === '/api/captcha/challenge') {
-    const challenge = await createChallenge({ secret: secrets(env).captcha });
-    return json(challenge);
-  }
-
-  if (method === 'POST' && path === '/api/captcha/verify') {
-    const body = await readJson<{ token?: string; slots?: string[] }>(req);
-    const result = await verifyChallenge(
-      String(body.token || ''),
-      Array.isArray(body.slots) ? body.slots : [],
-      secrets(env).captcha
-    );
-    return json(result);
+  // ── Public config (Turnstile site key etc.) ───────────
+  if (method === 'GET' && path === '/api/config') {
+    return json({
+      success: true,
+      commercial,
+      turnstile_site_key: env.TURNSTILE_SITEKEY || '',
+      site_url: env.SITE_URL || '',
+    });
   }
 
   // ── Plans (public) ────────────────────────────────────
@@ -111,6 +104,7 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       success: true,
       commercial,
       plans: commercial ? PUBLIC_PLANS : [],
+      turnstile_site_key: env.TURNSTILE_SITEKEY || '',
     });
   }
 
@@ -151,27 +145,44 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const body = await readJson<{
       username?: string;
       password?: string;
+      turnstile_token?: string;
       captcha_token?: string;
-      captcha_slots?: string[];
-      captchaToken?: string;
-      slots?: string[];
     }>(req);
 
-    const token = String(body.captcha_token || body.captchaToken || '');
-    const slots = (body.captcha_slots || body.slots || []) as string[];
-    if (!token || !slots.length) {
+    const turnstileToken = String(body.turnstile_token || body.captcha_token || '');
+    if (!turnstileToken) {
       return json({ success: false, message: '请完成人机验证' }, 400);
     }
-    const cap = await verifyChallenge(token, slots, secrets(env).captcha);
-    if (!cap.ok) {
-      return json({ success: false, message: '人机验证失败: ' + (cap.reason || 'unknown') }, 400);
-    }
-    // one-time token
-    const th = await sha256Hex(token);
-    try {
-      await env.DB.prepare('INSERT INTO captcha_used (token_hash) VALUES (?)').bind(th).run();
-    } catch {
-      return json({ success: false, message: '验证码已使用，请刷新' }, 400);
+    const secret = env.TURNSTILE_SECRET || '';
+    if (secret) {
+      try {
+        const ip =
+          req.headers.get('CF-Connecting-IP') ||
+          req.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+          '';
+        const form = new URLSearchParams();
+        form.set('secret', secret);
+        form.set('response', turnstileToken);
+        if (ip) form.set('remoteip', ip);
+        const vr = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: form.toString(),
+        });
+        const vd = (await vr.json()) as { success?: boolean; 'error-codes'?: string[] };
+        if (!vd.success) {
+          return json(
+            {
+              success: false,
+              message: '人机验证失败，请重试',
+              codes: vd['error-codes'] || [],
+            },
+            400
+          );
+        }
+      } catch {
+        return json({ success: false, message: '人机验证服务不可用' }, 503);
+      }
     }
 
     const reg = await registerUser(env.DB, String(body.username || ''), String(body.password || ''));
