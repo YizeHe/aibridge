@@ -406,12 +406,15 @@ function shell(content, opts = null) {
 
   if (state.user) {
     const isAdmin = state.user.role === 'admin';
+    const isRoot = String(state.user.username || '').toLowerCase() === 'root';
     nav.innerHTML = `
       <a href="#/app">工作区</a>
       <a href="#/account">账号</a>
       ${state.commercial ? '<a href="#/billing">会员</a>' : ''}
+      <a href="#/ticket">工单</a>
+      ${isRoot ? '<a href="#/kefu">客服台</a>' : ''}
       ${isAdmin ? '<a href="#/admin">用户管理</a>' : ''}
-      <a href="#/skills">SKILLS</a>
+      <a href="#/skills">安装提示词</a>
       <button type="button" class="nav-link" id="logout">退出</button>`;
     nav.querySelector('#logout').onclick = async () => {
       try {
@@ -426,7 +429,8 @@ function shell(content, opts = null) {
     };
   } else {
     nav.innerHTML = `
-      <a href="#/skills">SKILLS</a>
+      <a href="#/ticket">工单</a>
+      <a href="#/skills">安装提示词</a>
       <a href="#/login">登录</a>
       <a class="btn btn-primary" href="#/register" style="text-decoration:none">注册</a>`;
   }
@@ -459,27 +463,42 @@ function viewHome() {
   const heroActions = state.user
     ? `
           <a class="btn btn-primary" href="#/app" style="text-decoration:none">前往工作区</a>
-          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>`
+          <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>`
     : `
           <a class="btn btn-primary" href="#/register" style="text-decoration:none">立即注册</a>
           <a class="btn" href="#/login" style="text-decoration:none">登录</a>
-          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>`;
+          <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>`;
   const el = $(`
-    <div>
+    <div class="home">
       <section class="hero">
         <h1>浏览器与本地 AI Agent 的云端互通桥</h1>
-        <p>
-          注册账号、创建项目、用 API Key 连接本地 Agent，在网页里对话。
-        </p>
+        <p class="hero-tagline">稳定 · 高效 · 便捷</p>
         <div class="hero-actions">
           ${heroActions}
         </div>
       </section>
-      <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px"></div>
-      <div style="margin-top:1.75rem">${skillsBlock()}</div>
+
+      <section class="pitch liquid-glass">
+        <h2>你是否也有这样的痛点？</h2>
+        <p>
+          出门在外电脑不在身边，但用户突然反馈程序出 Bug，自己没法修复，最终耽误了客户，也影响了自己产品的信誉。
+        </p>
+        <p>
+          不必担心，AIBridge 可以让你在世界各地都能够和自家的 AI 对话。只要您家里的电脑还开着机，就能在手机端或其他移动设备上给 AI 发送指令，极速修改！
+        </p>
+        <p>
+          本项目为开源项目，您完全可以部署在自己的服务器上，这样是完全免费的。开源地址：
+          <a href="https://github.com/YizeHe/aibridge" target="_blank" rel="noopener noreferrer">github.com/YizeHe/aibridge</a>。
+          如果您准备使用开源版，烦请给一个 <strong>Star</strong>。
+        </p>
+        <p>
+          您也可以选择使用本平台，我们能够提供更加稳定 · 高效 · 便捷的服务。每月可以免费创建一个项目，或者花费 5 元人民币享受完全无限制服务，同时也享受客服技术支持。
+        </p>
+      </section>
+
+      <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px;margin-top:1.5rem"></div>
     </div>`);
   shell(el);
-  bindSkillsCopy(el);
   const grid = el.querySelector('#feature-grid');
   const features = [
     {
@@ -490,17 +509,16 @@ function viewHome() {
     {
       title: '本地 Agent',
       desc: 'Go 客户端或任意 HTTP 工具轮询待处理消息并推送回复。',
-      meta: ['说明', 'SKILLS.md'],
+      meta: ['说明', '安装提示词'],
     },
     {
       title: '注册即用',
-      desc: '图标验证码注册、会话登录，账号页复制 API Key 即可接入。',
+      desc: '登录后即可复制提示词接入 AI，账号页管理 API Key。',
       meta: ['鉴权', '会话 + Key'],
     },
   ];
   for (const f of features) {
     const card = document.createElement('article');
-    // 轻量毛玻璃，不用重 refraction 避免裁字
     card.className = 'liquid-glass feature-card';
     card.innerHTML = `
       <h3>${escapeHtml(f.title)}</h3>
@@ -644,7 +662,7 @@ async function viewProjects() {
       <div class="section-head">
         <h2>我的项目</h2>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
-          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>
+          <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>
           <button type="button" class="btn btn-primary" id="new-p">新建项目</button>
         </div>
       </div>
@@ -1466,7 +1484,7 @@ async function viewAccount() {
       <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0 1rem">
         <button type="button" class="btn" id="copy-key">复制 Key</button>
         <button type="button" class="btn" id="rotate-key">轮换 Key</button>
-        <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>
+        <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>
       </div>
       ${
         state.commercial
@@ -1624,7 +1642,230 @@ async function viewBilling() {
   }
 }
 
+async function viewTicket() {
+  const u = await ensureUser();
+  if (!u) {
+    setFlash('请先登录后再提交工单', true);
+    location.hash = '#/login';
+    return render();
+  }
+  let lastId = 0;
+  const el = $(`
+    <div class="support-layout">
+      <div class="section-head" style="margin:0">
+        <h2 style="margin:0">工单客服</h2>
+        <span style="font-size:0.85rem;color:var(--text-dim)">工作日将尽快回复</span>
+      </div>
+      <div class="support-chat liquid-glass">
+        <div class="chat-log scroll-thin" id="support-log"></div>
+        <form class="chat-compose" id="support-compose">
+          <textarea name="text" rows="2" placeholder="描述问题…（Enter 发送，Shift+Enter 换行）" required></textarea>
+          <button class="btn btn-primary" type="submit">发送</button>
+        </form>
+      </div>
+    </div>`);
+  shell(el, { backHref: '#/', backLabel: '返回首页', pageClass: 'page-chat' });
+  const log = el.querySelector('#support-log');
+  const form = el.querySelector('#support-compose');
+
+  function appendMsgs(msgs) {
+    for (const m of msgs) {
+      if (m.id <= lastId) continue;
+      lastId = Math.max(lastId, m.id);
+      const b = document.createElement('div');
+      b.className = `bubble ${m.sender === 'user' ? 'user' : 'agent'}`;
+      b.innerHTML = `<div class="who">${m.sender === 'user' ? '我' : '客服'} · ${fmtTime(m.created_at)}</div><div class="msg-md">${md(m.text)}</div>`;
+      log.appendChild(b);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function loadAll() {
+    const r = await API.get('/api/support/thread');
+    if (!r.success) {
+      setFlash(r.message || '加载工单失败', true);
+      return;
+    }
+    log.innerHTML = '';
+    lastId = 0;
+    if (!(r.messages || []).length) {
+      const tip = document.createElement('div');
+      tip.className = 'bubble agent';
+      tip.innerHTML =
+        '<div class="who">系统</div><div class="msg-md">你好，请描述遇到的问题，客服会在此回复。</div>';
+      log.appendChild(tip);
+    }
+    appendMsgs(r.messages || []);
+  }
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const ta = form.querySelector('textarea');
+    const text = (ta.value || '').trim();
+    if (!text) return;
+    ta.value = '';
+    const r = await API.post('/api/support/messages', { text });
+    if (!r.success) {
+      setFlash(r.message || '发送失败', true);
+      return;
+    }
+    if (r.message) appendMsgs([r.message]);
+  };
+  form.querySelector('textarea').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  await loadAll();
+  const timer = setInterval(async () => {
+    if (!document.body.contains(el)) {
+      clearInterval(timer);
+      return;
+    }
+    try {
+      const r = await API.get(`/api/support/messages?since=${lastId}`);
+      if (r.success && r.messages?.length) appendMsgs(r.messages);
+    } catch {
+      /* */
+    }
+  }, 3000);
+}
+
+async function viewKefu() {
+  const u = await ensureUser();
+  if (!u) {
+    location.hash = '#/login';
+    return render();
+  }
+  if (String(u.username || '').toLowerCase() !== 'root') {
+    setFlash('仅 root 账号可访问客服台', true);
+    location.hash = '#/';
+    return render();
+  }
+
+  let activeId = null;
+  let lastId = 0;
+  const el = $(`
+    <div class="kefu-layout">
+      <aside class="kefu-list liquid-glass">
+        <div class="ws-files-head"><span>工单列表</span></div>
+        <div class="ws-files-list scroll-thin" id="kefu-threads"></div>
+      </aside>
+      <div class="support-chat liquid-glass" id="kefu-pane">
+        <div class="ws-editor-head">
+          <span class="ws-editor-title" id="kefu-title">选择左侧工单</span>
+        </div>
+        <div class="chat-log scroll-thin" id="kefu-log"></div>
+        <form class="chat-compose" id="kefu-compose" style="display:none">
+          <textarea name="text" rows="2" placeholder="回复用户…（Enter 发送）" required></textarea>
+          <button class="btn btn-primary" type="submit">回复</button>
+        </form>
+      </div>
+    </div>`);
+  shell(el, { backHref: '#/', backLabel: '返回首页', pageClass: 'page-chat' });
+  const listEl = el.querySelector('#kefu-threads');
+  const log = el.querySelector('#kefu-log');
+  const title = el.querySelector('#kefu-title');
+  const form = el.querySelector('#kefu-compose');
+
+  function appendMsgs(msgs) {
+    for (const m of msgs) {
+      if (m.id <= lastId) continue;
+      lastId = Math.max(lastId, m.id);
+      const b = document.createElement('div');
+      b.className = `bubble ${m.sender === 'staff' ? 'user' : 'agent'}`;
+      b.innerHTML = `<div class="who">${m.sender === 'staff' ? '客服(我)' : '用户'} · ${fmtTime(m.created_at)}</div><div class="msg-md">${md(m.text)}</div>`;
+      log.appendChild(b);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function loadThreads() {
+    const r = await API.get('/api/kefu/threads');
+    if (!r.success) {
+      setFlash(r.message || '加载失败', true);
+      return;
+    }
+    listEl.innerHTML = '';
+    for (const t of r.threads || []) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'ws-file-item' + (activeId === t.id ? ' active' : '');
+      item.innerHTML = `
+        <span class="mono" style="font-weight:600">${escapeHtml(t.username || 'user')}</span>
+        <span style="font-size:0.78rem;color:var(--text-faint);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${escapeHtml((t.last_preview || '暂无消息').slice(0, 48))}
+        </span>`;
+      item.onclick = () => openThread(t.id, t.username);
+      listEl.appendChild(item);
+    }
+    if (!(r.threads || []).length) {
+      listEl.innerHTML = '<div style="padding:0.75rem;color:var(--text-dim);font-size:0.88rem">暂无工单</div>';
+    }
+  }
+
+  async function openThread(id, username) {
+    activeId = id;
+    lastId = 0;
+    title.textContent = `与 ${username || '用户'} 的对话`;
+    form.style.display = 'flex';
+    log.innerHTML = '';
+    await loadThreads();
+    const r = await API.get(`/api/kefu/threads/${id}`);
+    if (!r.success) {
+      setFlash(r.message || '加载对话失败', true);
+      return;
+    }
+    appendMsgs(r.messages || []);
+  }
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!activeId) return;
+    const ta = form.querySelector('textarea');
+    const text = (ta.value || '').trim();
+    if (!text) return;
+    ta.value = '';
+    const r = await API.post(`/api/kefu/threads/${activeId}/reply`, { text });
+    if (!r.success) {
+      setFlash(r.message || '回复失败', true);
+      return;
+    }
+    if (r.message) appendMsgs([r.message]);
+    loadThreads();
+  };
+  form.querySelector('textarea').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  await loadThreads();
+  const timer = setInterval(async () => {
+    if (!document.body.contains(el)) {
+      clearInterval(timer);
+      return;
+    }
+    if (!activeId) return;
+    try {
+      const r = await API.get(`/api/kefu/threads/${activeId}/messages?since=${lastId}`);
+      if (r.success && r.messages?.length) appendMsgs(r.messages);
+    } catch {
+      /* */
+    }
+  }, 3000);
+}
+
 async function render() {
+  // path-based /kefu → hash route
+  if (/^\/kefu\/?$/.test(location.pathname) && location.hash !== '#/kefu') {
+    location.replace('/#/kefu');
+    return;
+  }
+
   initWorld(document.getElementById('world'));
   await loadPlans();
   const hash = location.hash || '#/';
@@ -1638,6 +1879,8 @@ async function render() {
   if (path === '/account') return viewAccount();
   if (path === '/billing') return viewBilling();
   if (path === '/admin') return viewAdmin();
+  if (path === '/ticket' || path === '/support') return viewTicket();
+  if (path === '/kefu') return viewKefu();
   const chat = path.match(/^\/chat\/(\d+)/);
   if (chat) return viewChat(chat[1]);
 

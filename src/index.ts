@@ -59,6 +59,15 @@ import {
   publicFile,
   upsertFile,
 } from './files';
+import {
+  addMessage as addSupportMessage,
+  getOrCreateUserThread,
+  getThread as getSupportThread,
+  isRootUser,
+  listMessages as listSupportMessages,
+  listThreadsForStaff,
+  publicMessage as publicSupportMessage,
+} from './support';
 
 function requireUser(u: Awaited<ReturnType<typeof sessionUser>>): asserts u is NonNullable<typeof u> {
   if (!u) throw new HttpError(401, '未登录');
@@ -768,6 +777,98 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
         .bind(plan, premium_until, id)
         .run();
       return json({ success: true, plan, premium_until });
+    }
+
+    return json({ success: false, message: 'not found' }, 404);
+  }
+
+  // ── Support tickets (工单) ────────────────────────────
+  if (method === 'GET' && path === '/api/support/thread') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const thread = await getOrCreateUserThread(env.DB, u.id);
+    const messages = await listSupportMessages(env.DB, thread.id, 0);
+    return json({
+      success: true,
+      thread,
+      messages: messages.map(publicSupportMessage),
+    });
+  }
+
+  if (method === 'GET' && path === '/api/support/messages') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const thread = await getOrCreateUserThread(env.DB, u.id);
+    const since = Number(url.searchParams.get('since') || 0) || 0;
+    const messages = await listSupportMessages(env.DB, thread.id, since);
+    return json({ success: true, messages: messages.map(publicSupportMessage) });
+  }
+
+  if (method === 'POST' && path === '/api/support/messages') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const body = await readJson<{ text?: string }>(req);
+    const thread = await getOrCreateUserThread(env.DB, u.id);
+    try {
+      const msg = await addSupportMessage(env.DB, thread.id, 'user', u.id, String(body.text || ''));
+      return json({ success: true, message: publicSupportMessage(msg) });
+    } catch (e) {
+      return json({ success: false, message: e instanceof Error ? e.message : String(e) }, 400);
+    }
+  }
+
+  // ── Kefu desk (root only) ─────────────────────────────
+  if (path.startsWith('/api/kefu/')) {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    if (!isRootUser(u)) {
+      return json({ success: false, message: '仅 root 账号可访问客服台' }, 403);
+    }
+
+    if (method === 'GET' && path === '/api/kefu/threads') {
+      const threads = await listThreadsForStaff(env.DB);
+      return json({ success: true, threads });
+    }
+
+    const thrMatch = path.match(/^\/api\/kefu\/threads\/(\d+)(.*)$/);
+    if (thrMatch) {
+      const threadId = Number(thrMatch[1]);
+      const rest = thrMatch[2] || '';
+      const thread = await getSupportThread(env.DB, threadId);
+      if (!thread) return json({ success: false, message: '工单不存在' }, 404);
+
+      if (method === 'GET' && rest === '') {
+        const messages = await listSupportMessages(env.DB, threadId, 0);
+        const owner = await getUserById(env.DB, thread.user_id);
+        return json({
+          success: true,
+          thread,
+          username: owner?.username || '',
+          messages: messages.map(publicSupportMessage),
+        });
+      }
+
+      if (method === 'GET' && rest === '/messages') {
+        const since = Number(url.searchParams.get('since') || 0) || 0;
+        const messages = await listSupportMessages(env.DB, threadId, since);
+        return json({ success: true, messages: messages.map(publicSupportMessage) });
+      }
+
+      if (method === 'POST' && rest === '/reply') {
+        const body = await readJson<{ text?: string }>(req);
+        try {
+          const msg = await addSupportMessage(
+            env.DB,
+            threadId,
+            'staff',
+            u.id,
+            String(body.text || '')
+          );
+          return json({ success: true, message: publicSupportMessage(msg) });
+        } catch (e) {
+          return json({ success: false, message: e instanceof Error ? e.message : String(e) }, 400);
+        }
+      }
     }
 
     return json({ success: false, message: 'not found' }, 404);

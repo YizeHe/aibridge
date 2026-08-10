@@ -683,6 +683,91 @@ html.dark .lg-surface {
   margin-top: 1.25rem;
 }
 
+.hero-tagline {
+  margin: 0 auto !important;
+  font-size: 1.15rem !important;
+  font-weight: 620;
+  letter-spacing: 0.12em;
+  color: var(--text) !important;
+  opacity: 0.88;
+}
+
+/* Homepage pitch */
+.pitch {
+  max-width: 42rem;
+  margin: 0 auto;
+  text-align: left;
+}
+.pitch h2 {
+  margin: 0 0 0.85rem;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+.pitch p {
+  margin: 0 0 0.85rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.pitch p:last-child {
+  margin-bottom: 0;
+}
+.pitch a {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+/* Support / kefu */
+.support-layout {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  height: 100%;
+  gap: 0.65rem;
+}
+.support-chat {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+  height: 100%;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+.support-chat .chat-log {
+  min-height: 0;
+  flex: 1;
+}
+.kefu-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 28%) 1fr;
+  gap: 0.65rem;
+  min-height: 0;
+  height: 100%;
+}
+.kefu-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 !important;
+}
+.kefu-list .ws-files-list {
+  flex: 1;
+  overflow: auto;
+}
+.kefu-layout .support-chat {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+@media (max-width: 720px) {
+  .kefu-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(140px, 32%) 1fr;
+  }
+}
+
 .section-head {
   display: flex;
   flex-wrap: wrap;
