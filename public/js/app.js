@@ -1897,6 +1897,18 @@ window.addEventListener('hashchange', () => render());
 window.addEventListener('resize', () => initWorld(document.getElementById('world')));
 
 (async () => {
+  // 支付回站：?from=pay → 账号页看会员状态
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('from') === 'pay') {
+      const order = q.get('order') || '';
+      history.replaceState(null, '', location.pathname + (location.hash || '#/account'));
+      location.hash = '#/account';
+      if (order) setFlash('支付结果处理中，若已付款请稍后刷新查看会员状态');
+    }
+  } catch {
+    /* */
+  }
   await ensureUser();
   await render();
 })();

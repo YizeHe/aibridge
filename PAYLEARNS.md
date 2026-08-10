@@ -9,56 +9,58 @@
 
 ### 现象
 
-调用 `POST https://pay.ykmcn.com/api/pay/create` 后，`code != 0`，`msg` 类似：
+服务端调用 `POST https://pay.ykmcn.com/api/pay/create`（无论 `method=web` 还是 `method=jump`）都可能返回：
 
 > 本次支付需要安全验证，请使用跳转支付接口发起支付
 
-前端表现为：点支付宝/微信后 toast/弹窗失败，无法打开收银台。
+前端表现为：无法打开收银台，只看到失败提示。
 
-### 原因
+### 原因（关键纠正）
 
-下单参数里用了：
+这里的 **「跳转支付接口」≠ 在 create 接口里把 method 改成 jump**。
 
-```text
-method=web
-```
+| 接口 | 用途 | AIBridge |
+|------|------|----------|
+| `POST /api/pay/create` | **服务端 API 下单**（mapi 风格，常触发设备/安全校验） | **不要用于浏览器收银台** |
+| **`GET/POST /api/pay/submit`** | **页面跳转支付**：用户浏览器打开带签名的 URL/表单，进入收银台 | **正确做法** |
 
-部分通道（尤其微信/支付宝）在商户后台开启了「安全验证 / 强制跳转」时，**禁止 web 接口**，必须用 **跳转支付**：
+商户后台对部分通道开启「强制跳转 / 安全验证」后，**禁止 API create**，只允许用户浏览器访问 **submit**。
 
-```text
-method=jump
-```
-
-### 正确做法
+### 正确做法（当前实现）
 
 ```ts
-// src/pay.ts createPayOrder
-method: 'jump',  // 不要用 web
-type: 'alipay' | 'wxpay',
-// ...
+// 1. 本地建订单 orders
+// 2. 组装参数（无 method 字段）：pid, type, out_trade_no, notify_url, return_url,
+//    name, money, clientip, device, timestamp, sign_type
+// 3. RSA 签名 → sign
+// 4. 返回给前端：
+payUrl = `https://pay.ykmcn.com/api/pay/submit?` + URLSearchParams(params)
+// 5. 前端 location.href = payUrl
 ```
 
-成功时平台返回的 `pay_info`（或 `payurl` / `pay_url`）是 **可浏览器打开的收银台 URL**，前端：
+### 错误做法
 
-```js
-location.href = r.payUrl;
+```ts
+// ❌ 服务端 fetch create，再把 pay_info 给前端
+method: 'web'   // 易触发安全验证
+method: 'jump'  // 仍是 create API，照样可能报「请使用跳转支付接口」
+await fetch('https://pay.ykmcn.com/api/pay/create', ...)
 ```
 
-### 错误处理
+### return_url 注意
 
-若仍看到该文案，优先检查线上 Worker 是否已部署 `method: 'jump'`，而不是只改本地。
+- 不要用 `https://site/#/account`（平台追加 `?out_trade_no=` 时与 hash 冲突）  
+- 用 `https://site/?from=pay&order=xxx`，前端识别后进 `#/account`  
 
 ---
 
-## 2. method 取值对照（易支付系常见）
+## 2. 接口对照
 
-| method | 含义 | AIBridge 场景 |
-|--------|------|----------------|
-| `jump` | 跳转收银台 URL | **默认采用** |
-| `web` | 网页/接口类，部分通道禁用 | 会触发「安全验证」报错 |
-| `jsapi` / `scan` 等 | 公众号 / 扫码等 | 本站未接 |
-
-以商户后台与平台文档为准；本项目只接 **跳转收银台**。
+| 路径 | 谁发起 | 说明 |
+|------|--------|------|
+| `/api/pay/submit` | **用户浏览器** | 跳转收银台（本站采用） |
+| `/api/pay/create` | 服务器 | API 下单；本通道易被安全策略拦截 |
+| `/api/pay/notify` | 支付平台 → 本站 | 异步发货回调 |
 
 ---
 
@@ -169,9 +171,10 @@ AIBridge 当前实现以 **pay.ykmcn.com + RSA + method=jump** 为准，勿混�
 
 | 日期 | 项 |
 |------|-----|
-| 2026-08 | 下单 `method` 从 `web` 改为 `jump`，消除「安全验证 / 跳转支付」报错 |
-| 2026-08 | 兼容 `pay_info` / `payurl` / `pay_url` 字段 |
-| 2026-08 | `return_url` 改为 `/#/account`；激活码 placeholder 文案调整 |
+| 2026-08 | 初判把 `method` 从 `web` 改为 `jump`（仍走 create）——**不够**，平台仍报跳转支付 |
+| 2026-08 | **改为浏览器打开 `/api/pay/submit` 签名 URL**，不再服务端 create |
+| 2026-08 | `return_url` 用 `/?from=pay&order=`，避免 hash 冲突 |
+| 2026-08 | 激活码 placeholder：新用户福利：RemoteAiGENT |
 
 ---
 

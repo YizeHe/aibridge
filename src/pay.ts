@@ -163,6 +163,14 @@ export async function parsePayParams(
   return params;
 }
 
+const PAY_HOST = 'https://pay.ykmcn.com';
+
+/**
+ * 页面跳转支付（收银台）：用户浏览器直接打开已签名 URL。
+ * 不要用服务端 POST /api/pay/create + method=web/jump —— 该通道会报
+ * 「本次支付需要安全验证，请使用跳转支付接口发起支付」。
+ * 正确接口是 /api/pay/submit（页面跳转），见 PAYLEARNS.md。
+ */
 export async function createPayOrder(
   env: Env,
   req: Request,
@@ -183,8 +191,8 @@ export async function createPayOrder(
   const out_trade_no = orderNo();
   const base = siteBase(env, req);
   const notify_url = notifyUrl(env, req);
-  // 支付完成回站：账号页（会员状态可见）；发货仍以 notify 回调为准
-  const return_url = `${base}/#/account`;
+  // 避免 return_url 带 #hash（平台追加 query 会乱）；回站后再进账号页
+  const return_url = `${base}/?from=pay&order=${encodeURIComponent(out_trade_no)}`;
   const name = `AIBridge ${plan === 'monthly' ? '月付' : '年付'}`;
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
@@ -195,11 +203,9 @@ export async function createPayOrder(
     .bind(out_trade_no, userId, plan, amount, payType)
     .run();
 
-  // method 必须用 jump（跳转支付）。web 在部分通道会返回：
-  // 「本次支付需要安全验证，请使用跳转支付接口发起支付」
+  // 跳转支付参数：无 method 字段；由浏览器访问 submit 入口
   const payParams: Record<string, string> = {
     pid: String(pid),
-    method: 'jump',
     type: payType,
     out_trade_no,
     notify_url,
@@ -207,67 +213,20 @@ export async function createPayOrder(
     name,
     money: amount.toFixed(2),
     clientip: clientIp(req),
+    device: 'pc',
     timestamp,
     sign_type: 'RSA',
   };
 
   try {
     payParams.sign = await rsaSign(payParams, merchantKey);
-    const resp = await fetch('https://pay.ykmcn.com/api/pay/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(payParams).toString(),
-    });
-    const rawText = await resp.text();
-    let payData: {
-      code?: number;
-      pay_info?: string;
-      payurl?: string;
-      pay_url?: string;
-      trade_no?: string;
-      msg?: string;
-      message?: string;
-    } = {};
-    try {
-      payData = JSON.parse(rawText) as typeof payData;
-    } catch {
-      await env.DB.prepare(`UPDATE orders SET status = 'failed' WHERE id = ?`)
-        .bind(out_trade_no)
-        .run();
-      return {
-        ok: false,
-        error: '支付平台返回非 JSON：' + rawText.slice(0, 200),
-        status: 502,
-      };
-    }
-    const payUrl = String(payData.pay_info || payData.payurl || payData.pay_url || '').trim();
-    if (Number(payData.code) === 0 && payUrl) {
-      if (payData.trade_no) {
-        await env.DB.prepare(`UPDATE orders SET trade_no = ? WHERE id = ?`)
-          .bind(String(payData.trade_no), out_trade_no)
-          .run();
-      }
-      return {
-        ok: true,
-        payUrl,
-        order_no: out_trade_no,
-        trade_no: payData.trade_no,
-      };
-    }
-    await env.DB.prepare(`UPDATE orders SET status = 'failed' WHERE id = ?`)
-      .bind(out_trade_no)
-      .run();
-    const platformMsg = payData.msg || payData.message || '创建支付失败';
-    // 友好化常见错误
-    let error = platformMsg;
-    if (/安全验证|跳转支付/.test(platformMsg)) {
-      error =
-        '支付通道要求跳转收银台。请稍后重试；若持续失败请联系客服（工单）。技术说明：下单 method 须为 jump。';
-    }
+    // 浏览器直接打开跳转支付入口（收银台页面）
+    const qs = new URLSearchParams(payParams).toString();
+    const payUrl = `${PAY_HOST}/api/pay/submit?${qs}`;
     return {
-      ok: false,
-      error,
-      status: 502,
+      ok: true,
+      payUrl,
+      order_no: out_trade_no,
     };
   } catch (e: unknown) {
     await env.DB.prepare(`UPDATE orders SET status = 'failed' WHERE id = ?`)
