@@ -10,7 +10,8 @@
   ],
   "vars": {
     "APP_NAME": "AIBridge",
-    "SITE_URL": "https://aibridge.tanstudio.me"
+    "SITE_URL": "https://aibridge.tanstudio.me",
+    "COMMERCIAL": "1"
   },
   "d1_databases": [
     {

@@ -104,7 +104,7 @@ export async function registerUser(
 
   const password_hash = await hashPassword(password);
   const api_key = generateApiKey();
-  // Open registration: always normal user (no special root→admin)
+  // 公开注册始终为普通用户；管理员仅由 ensureAdminSeed 创建
   const role = 'user';
   const plan = 'free';
 
@@ -125,6 +125,35 @@ export async function registerUser(
     if (msg.includes('UNIQUE')) return { ok: false, error: '用户名已存在' };
     return { ok: false, error: msg };
   }
+}
+
+/** 商业站确保存在 root 管理员（密码可由环境变量覆盖） */
+export async function ensureAdminSeed(
+  db: D1Database,
+  password = 'ROOT12345678'
+): Promise<void> {
+  const root = await getUserByUsername(db, 'root');
+  if (root) {
+    // 已存在则确保是 admin
+    if (root.role !== 'admin') {
+      await db
+        .prepare(
+          `UPDATE users SET role = 'admin', plan = 'premium', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+        )
+        .bind(root.id)
+        .run();
+    }
+    return;
+  }
+  const password_hash = await hashPassword(password);
+  const api_key = generateApiKey();
+  await db
+    .prepare(
+      `INSERT INTO users (username, password_hash, role, plan, api_key)
+       VALUES ('root', ?, 'admin', 'premium', ?)`
+    )
+    .bind(password_hash, api_key)
+    .run();
 }
 
 export async function changePassword(

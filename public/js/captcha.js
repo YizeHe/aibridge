@@ -1,54 +1,79 @@
 import { API } from './api.js';
 
-/** Icon-order captcha mount. Returns { token, slots } getters. */
+/**
+ * 图标顺序点击验证码。
+ * 兼容两种 challenge 形状：
+ * - @yunstorage/icon-captcha: items[].svg (完整 SVG 字符串)
+ * - 简化版: items[].path (path d 属性)
+ */
 export async function mountIconCaptcha(container) {
-  container.innerHTML = '<div class="field">Loading verification...</div>';
+  container.innerHTML = '<div class="field">正在加载验证码...</div>';
   const data = await API.get('/api/captcha/challenge');
-  const ch = data.data || data;
+  const ch = data.data && (data.data.items || data.data.token) ? data.data : data;
   const selected = [];
   container.innerHTML = '';
   container.dataset.token = ch.token || '';
+  container.dataset.slots = '[]';
 
   const prompt = document.createElement('div');
-  prompt.className = 'field';
-  prompt.style.marginBottom = '0.4rem';
-  prompt.textContent = ch.prompt || 'Tap icons in order';
+  prompt.className = 'icon-captcha-prompt';
+  prompt.textContent = ch.prompt || '请按提示顺序点击图标';
 
   const canvas = document.createElement('div');
-  canvas.className = 'captcha-canvas';
+  canvas.className = 'icon-captcha-canvas captcha-canvas';
+
   const status = document.createElement('div');
   status.className = 'field';
   status.style.fontSize = '0.78rem';
-  status.textContent = 'Selected: 0 / 3';
+  status.style.marginTop = '0.35rem';
+  status.textContent = '已选：0 / 3';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'icon-captcha-widget';
 
   const items = ch.items || [];
   items.forEach((it) => {
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = 'captcha-item';
+    el.className = 'icon-captcha-item captcha-item';
     el.style.left = (it.x ?? 50) + '%';
     el.style.top = (it.y ?? 50) + '%';
     el.title = it.label || it.iconId || '';
-    const path = it.path || it.glyph || '';
-    if (String(path).includes('<')) {
-      el.innerHTML = path;
-    } else if (path) {
-      el.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22"><path d="${path}" fill="currentColor"/></svg>`;
+
+    const glyph = document.createElement('span');
+    glyph.className = 'icon-captcha-glyph';
+
+    if (it.svg && String(it.svg).includes('<svg')) {
+      glyph.innerHTML = it.svg;
+    } else if (it.path && String(it.path).includes('<')) {
+      glyph.innerHTML = it.path;
+    } else if (it.path) {
+      glyph.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${String(it.path).replace(/"/g, '')}"/></svg>`;
+    } else if (it.glyph) {
+      glyph.innerHTML = it.glyph;
     } else {
-      el.textContent = (it.label || '?').slice(0, 2);
-      el.style.fontSize = '11px';
+      // last resort: first letter of label, not "?"
+      const label = (it.label || it.iconId || '·').toString();
+      glyph.textContent = label.slice(0, 1).toUpperCase();
+      glyph.style.fontWeight = '700';
+      glyph.style.fontSize = '14px';
     }
+
+    el.appendChild(glyph);
     el.onclick = () => {
       if (selected.includes(it.slotId)) return;
       selected.push(it.slotId);
       el.classList.add('selected');
-      status.textContent = `Selected: ${selected.length} / 3`;
+      el.style.outline = '2px solid var(--accent, #5b8def)';
+      el.style.outlineOffset = '2px';
+      status.textContent = `已选：${selected.length} / 3`;
       container.dataset.slots = JSON.stringify(selected);
     };
     canvas.appendChild(el);
   });
 
-  container.append(prompt, canvas, status);
+  wrap.append(prompt, canvas, status);
+  container.appendChild(wrap);
 
   return {
     get token() {

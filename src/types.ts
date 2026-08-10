@@ -15,6 +15,8 @@ export type Env = {
   MERCHANT_KEY?: string;
   PLATFORM_KEY?: string;
   NOTIFY_URL?: string;
+  ADMIN_PASSWORD?: string;
+  SECRET?: string;
 };
 
 export type UserRow = {

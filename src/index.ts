@@ -10,6 +10,7 @@ import {
   changePassword,
   createSession,
   destroySession,
+  ensureAdminSeed,
   getUserById,
   getUserByUsername,
   publicUser,
@@ -48,6 +49,14 @@ import {
   PUBLIC_PLANS,
   type PayPlanId,
 } from './pay';
+import {
+  deleteFile,
+  getFile,
+  listFileChanges,
+  listFiles,
+  publicFile,
+  upsertFile,
+} from './files';
 
 function requireUser(u: Awaited<ReturnType<typeof sessionUser>>): asserts u is NonNullable<typeof u> {
   if (!u) throw new HttpError(401, '未登录');
@@ -61,7 +70,25 @@ class HttpError extends Error {
   }
 }
 
+let seeded = false;
+async function seedOnce(env: Env) {
+  if (seeded) return;
+  // 商业站自动确保 root 管理员存在
+  if (isCommercial(env)) {
+    try {
+      const pw = (env as { ADMIN_PASSWORD?: string }).ADMIN_PASSWORD || 'ROOT12345678';
+      await ensureAdminSeed(env.DB, pw);
+      seeded = true;
+    } catch {
+      // 表可能尚未 migrate
+    }
+  } else {
+    seeded = true;
+  }
+}
+
 async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
+  await seedOnce(env);
   const path = url.pathname;
   const method = req.method.toUpperCase();
   const commercial = isCommercial(env);
@@ -299,6 +326,67 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       return json({ success: true, message: toMessage(msg) });
     }
 
+    // ── Project files (workspace) ───────────────────────
+    if (method === 'GET' && rest === '/files') {
+      const files = await listFiles(env.DB, projectId);
+      return json({ success: true, files });
+    }
+
+    if (method === 'GET' && rest === '/files/changes') {
+      const since = url.searchParams.get('since') || new Date(0).toISOString();
+      const files = await listFileChanges(env.DB, projectId, since);
+      return json({ success: true, files, server_time: new Date().toISOString() });
+    }
+
+    if (method === 'GET' && rest === '/files/content') {
+      const p = url.searchParams.get('path') || '';
+      const row = await getFile(env.DB, projectId, p);
+      if (!row) {
+        // try normalized via upsert path rules
+        const { normalizePath } = await import('./files');
+        const np = normalizePath(p);
+        const row2 = np ? await getFile(env.DB, projectId, np) : null;
+        if (!row2) return json({ success: false, message: '文件不存在' }, 404);
+        return json({ success: true, file: publicFile(row2, true) });
+      }
+      return json({ success: true, file: publicFile(row, true) });
+    }
+
+    if (method === 'PUT' && rest === '/files') {
+      if (project.user_id !== u.id) return json({ success: false, message: '无权写入' }, 403);
+      const body = await readJson<{
+        path?: string;
+        content?: string;
+        encoding?: string;
+        content_type?: string;
+        base_version?: number;
+      }>(req);
+      const r = await upsertFile(env, projectId, String(body.path || ''), String(body.content ?? ''), {
+        encoding: body.encoding,
+        content_type: body.content_type,
+        base_version: body.base_version ?? null,
+      });
+      if (!r.ok) {
+        return json(
+          {
+            success: false,
+            message: r.error,
+            file: r.current ? publicFile(r.current, true) : undefined,
+          },
+          r.status
+        );
+      }
+      return json({ success: true, file: publicFile(r.file, true) });
+    }
+
+    if (method === 'DELETE' && rest === '/files') {
+      if (project.user_id !== u.id) return json({ success: false, message: '无权删除' }, 403);
+      const p = url.searchParams.get('path') || '';
+      const r = await deleteFile(env, projectId, p);
+      if (!r.ok) return json({ success: false, message: r.error }, r.status);
+      return json({ success: true });
+    }
+
     if (method === 'GET' && rest === '/events') {
       if (project.user_id !== u.id && !(commercial && u.role === 'admin')) {
         return json({ success: false, message: '无权访问' }, 403);
@@ -385,6 +473,88 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     if (!project) return json({ success: false, message: '项目不存在' }, 404);
     const n = await ackMessages(env.DB, project.id, body.ids);
     return json({ success: true, acked: n });
+  }
+
+  // Agent files
+  if (method === 'GET' && path === '/api/agent/files') {
+    const agent = await apiKeyUser(env, req);
+    if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
+    const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
+    const project = await resolveProjectForUser(env.DB, agent.id, pref);
+    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const since = url.searchParams.get('since');
+    if (since) {
+      const files = await listFileChanges(env.DB, project.id, since);
+      return json({
+        success: true,
+        project: { id: project.id, name: project.name, slug: project.slug },
+        files,
+        server_time: new Date().toISOString(),
+      });
+    }
+    const files = await listFiles(env.DB, project.id);
+    return json({
+      success: true,
+      project: { id: project.id, name: project.name, slug: project.slug },
+      files,
+    });
+  }
+
+  if (method === 'GET' && path === '/api/agent/file') {
+    const agent = await apiKeyUser(env, req);
+    if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
+    const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
+    const fpath = url.searchParams.get('path') || '';
+    const project = await resolveProjectForUser(env.DB, agent.id, pref);
+    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const row = await getFile(env.DB, project.id, fpath);
+    if (!row) return json({ success: false, message: '文件不存在' }, 404);
+    return json({ success: true, file: publicFile(row, true) });
+  }
+
+  if (method === 'PUT' && path === '/api/agent/file') {
+    const agent = await apiKeyUser(env, req);
+    if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
+    const body = await readJson<{
+      project?: string;
+      p?: string;
+      path?: string;
+      content?: string;
+      encoding?: string;
+      content_type?: string;
+      base_version?: number;
+    }>(req);
+    const pref = String(body.project || body.p || '');
+    const project = await resolveProjectForUser(env.DB, agent.id, pref);
+    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const r = await upsertFile(env, project.id, String(body.path || ''), String(body.content ?? ''), {
+      encoding: body.encoding,
+      content_type: body.content_type,
+      base_version: body.base_version ?? null,
+    });
+    if (!r.ok) {
+      return json(
+        {
+          success: false,
+          message: r.error,
+          file: r.current ? publicFile(r.current, true) : undefined,
+        },
+        r.status
+      );
+    }
+    return json({ success: true, file: publicFile(r.file, true) });
+  }
+
+  if (method === 'DELETE' && path === '/api/agent/file') {
+    const agent = await apiKeyUser(env, req);
+    if (!agent) return json({ success: false, message: '无效 API Key' }, 401);
+    const pref = url.searchParams.get('project') || url.searchParams.get('p') || '';
+    const fpath = url.searchParams.get('path') || '';
+    const project = await resolveProjectForUser(env.DB, agent.id, pref);
+    if (!project) return json({ success: false, message: '项目不存在' }, 404);
+    const r = await deleteFile(env, project.id, fpath);
+    if (!r.ok) return json({ success: false, message: r.error }, r.status);
+    return json({ success: true });
   }
 
   if (method === 'GET' && path === '/api/agent/projects') {

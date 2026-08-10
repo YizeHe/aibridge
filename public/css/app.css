@@ -13,7 +13,8 @@
   --blue: #93c5fd;
   --danger: #e11d48;
   --ok: #059669;
-  --radius: 20px;
+  --radius: 22px;
+  --card-pad: clamp(1.15rem, 3.2vw, 1.55rem);
   --shadow: 0 12px 40px rgba(30, 40, 70, 0.08);
   --font: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -304,6 +305,8 @@ html.dark .field select {
   isolation: isolate;
   border-radius: var(--lg-radius, var(--radius));
   color: var(--text);
+  /* keep content clear of rounded corners */
+  --lg-radius: var(--radius);
   box-shadow:
     0 0 0 0.5px var(--lg-border),
     0 1px 0 rgba(255, 255, 255, 0.45) inset,
@@ -364,10 +367,35 @@ html.dark .lg-surface {
   z-index: 1;
   width: 100%;
   height: 100%;
-  padding: 1.15rem 1.2rem;
+  /* extra inset so text never sits under rounded corners */
+  padding: var(--card-pad);
+  padding-left: max(var(--card-pad), 1.35rem);
+  padding-right: max(var(--card-pad), 1.35rem);
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.55rem;
+  box-sizing: border-box;
+}
+
+/* panels without auto glass wrap still need safe padding */
+.liquid-glass.panel,
+.liquid-glass.panel-wide,
+.liquid-glass.price-card,
+.liquid-glass.project-card {
+  /* content padding applied via .lg-content after bind; fallback for pre-bind */
+  padding: 0;
+}
+
+.liquid-glass > h1,
+.liquid-glass > h2,
+.liquid-glass > h3,
+.liquid-glass > p,
+.liquid-glass > form,
+.liquid-glass > .field,
+.liquid-glass > .section-head {
+  /* if glass not yet wrapped, keep temporary safe margin */
+  margin-left: 0;
+  margin-right: 0;
 }
 
 /* Project grid — dynamic columns via JS sets --cols / --gap / --card-w */
@@ -505,13 +533,258 @@ html.dark .project-card .actions button {
   color: var(--text-dim);
 }
 
-/* Chat */
+/* Chat + workspace split */
 .chat-layout {
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  height: calc(100vh - var(--header-h) - 2.5rem);
+  grid-template-rows: auto 1fr;
+  height: calc(100vh - var(--header-h) - 1.25rem);
   min-height: 420px;
-  gap: 0.75rem;
+  gap: 0.65rem;
+}
+
+.ws-shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  height: 100%;
+  gap: 0.65rem;
+}
+.ws-shell.split {
+  grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.15fr);
+}
+.ws-shell.files-open:not(.split) {
+  grid-template-columns: 220px 1fr;
+}
+
+.ws-files {
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.ws-shell.files-open .ws-files {
+  display: flex;
+}
+.ws-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.ws-files-list {
+  overflow: auto;
+  padding: 0.45rem;
+  flex: 1;
+}
+.ws-file-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+.ws-file-item:hover,
+.ws-file-item.active {
+  background: var(--accent-soft);
+}
+.ws-file-item .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-main {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+  min-width: 0;
+  gap: 0.55rem;
+}
+
+.ws-editor {
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+.ws-shell.split .ws-editor {
+  display: flex;
+}
+.ws-editor-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+.ws-editor-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(50vw, 280px);
+}
+.ws-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ws-editor-body textarea,
+.ws-editor-body pre {
+  flex: 1;
+  margin: 0;
+  border: 0;
+  resize: none;
+  padding: 1rem 1.1rem;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  outline: none;
+  overflow: auto;
+  white-space: pre;
+}
+.ws-editor-body .md-preview {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem 1.15rem;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+.ws-editor-body .img-preview {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.ws-editor-body .img-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+}
+.ws-dirty {
+  color: #d97706;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.ws-conflict-banner {
+  display: none;
+  padding: 0.55rem 0.85rem;
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+  font-size: 0.82rem;
+  border-bottom: 1px solid rgba(217, 119, 6, 0.25);
+}
+.ws-conflict-banner.show {
+  display: block;
+}
+
+/* merge modal */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 20, 35, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.modal-card {
+  width: min(440px, 100%);
+  border-radius: 18px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  padding: 1.25rem 1.3rem;
+}
+.modal-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+.modal-card p {
+  margin: 0 0 1rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+/* admin table */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+.admin-table th,
+.admin-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0.45rem;
+  text-align: left;
+  vertical-align: top;
+}
+.admin-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+@media (max-width: 860px) {
+  .ws-shell.split,
+  .ws-shell.files-open:not(.split) {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(180px, 42vh) minmax(200px, 1fr);
+  }
+  .ws-shell.split .ws-files {
+    grid-row: 1;
+    max-height: 160px;
+  }
+  .ws-shell.split .ws-main {
+    grid-row: 2;
+  }
+  .ws-shell.split .ws-editor {
+    grid-row: 3;
+    min-height: 220px;
+  }
+  /* files-open only (no editor): files top, chat bottom */
+  .ws-shell.files-open:not(.split) {
+    grid-template-rows: minmax(140px, 32vh) 1fr;
+  }
+  .ws-shell.files-open:not(.split) .ws-files {
+    max-height: none;
+  }
 }
 
 .chat-log {
@@ -603,6 +876,48 @@ html.dark .msg-md pre {
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-dim);
+}
+
+/* SKILLS download block */
+.skills-block {
+  width: 100%;
+}
+.skills-block .lg-content,
+.skills-block {
+  /* safe padding before/after glass wrap */
+}
+.skills-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.15rem;
+}
+
+/* ensure panels get safe padding even before glass JS wraps */
+.liquid-glass.panel,
+.liquid-glass.panel-wide {
+  padding: var(--card-pad);
+  padding-left: max(var(--card-pad), 1.4rem);
+  padding-right: max(var(--card-pad), 1.4rem);
+  padding-top: max(var(--card-pad), 1.35rem);
+  padding-bottom: max(var(--card-pad), 1.35rem);
+}
+/* after liquid-glass wraps, .lg-content has padding; neutralize double pad */
+.liquid-glass.panel > .lg-content,
+.liquid-glass.panel-wide > .lg-content,
+.liquid-glass.skills-block > .lg-content {
+  padding: 0;
+}
+.liquid-glass.skills-block {
+  padding: var(--card-pad);
+  padding-left: max(var(--card-pad), 1.4rem);
+  padding-right: max(var(--card-pad), 1.4rem);
+  padding-top: max(var(--card-pad), 1.35rem);
+  padding-bottom: max(var(--card-pad), 1.35rem);
+}
+.liquid-glass.skills-block > .lg-content {
+  padding: 0;
+  gap: 0.75rem;
 }
 
 /* Theme toggle */
@@ -711,4 +1026,60 @@ html.dark .captcha-item {
   .chat-layout {
     height: calc(100vh - var(--header-h) - 1.25rem);
   }
+}
+
+/* Captcha icons (yunstorage svg + path fallback) */
+.icon-captcha-widget { width: 100%; }
+.icon-captcha-prompt {
+  text-align: center;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.65rem;
+}
+.icon-captcha-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 168px;
+  border-radius: 14px;
+  border: 1px dashed var(--line);
+  background: color-mix(in srgb, var(--bg) 70%, #fff);
+  overflow: hidden;
+}
+.icon-captcha-item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.75);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  color: #1e293b;
+}
+html.dark .icon-captcha-item {
+  background: rgba(20,28,48,0.85);
+  color: #e2e8f0;
+}
+.icon-captcha-item:hover { transform: translate(-50%, -50%) scale(1.12); }
+.icon-captcha-glyph {
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: inherit;
+}
+.icon-captcha-glyph svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
