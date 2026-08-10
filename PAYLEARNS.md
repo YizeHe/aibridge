@@ -109,23 +109,39 @@ await fetch('https://pay.ykmcn.com/api/pay/create', ...)
 
 ---
 
-## 4. 异步回调 notify（发货唯一依据）
+## 4. 异步回调 notify（发货依据）+ 回站补单
+
+### 实踩：付款成功但页面仍「未开通」
+
+`key/dev.vars` 里曾配置：
+
+```text
+NOTIFY_URL=https://vpnnode.forbiddenx.top/notify
+```
+
+这是**旧项目**回调地址。用户付完款，通知打到旧站，**AIBridge 从未收到 notify**，本地 `orders` 一直 `pending/failed`，会员不更新。
+
+**修复：**
+
+1. `notifyUrl()`：**忽略**非本站的 `NOTIFY_URL`，强制  
+   `https://aibridge.tanstudio.me/api/pay/notify`  
+2. 回站 `/?from=pay&order=` 时前端调 **`POST /api/pay/sync`**，用平台  
+   `POST /api/pay/query`（`status===1` 已支付）补开会员  
+3. notify 验签失败时也会 fallback 到 query 补单  
+
+线上请执行：
+
+```bash
+# 可选：写入正确 secret（代码已兜底本站 URL）
+echo https://aibridge.tanstudio.me/api/pay/notify | npx.cmd wrangler secret put NOTIFY_URL
+```
 
 ### 要求
 
-- 公网 **HTTPS**  
-- 推荐固定：`NOTIFY_URL=https://aibridge.tanstudio.me/api/pay/notify`  
-- 处理成功必须纯文本返回 **`success`**（平台约定；返回 `fail` 会重试）  
-- **幂等**：`orders.status === 'paid'` 时直接 success，勿重复加会员  
-
-### 坑
-
-| 问题 | 后果 | 处理 |
-|------|------|------|
-| notify 仍指向旧域名（如别的项目） | 付了钱不升级 | `wrangler secret put NOTIFY_URL` 或 env 改为本站 |
-| 只信 `return_url` 回站 | 用户关页/回调慢导致漏单 | 回站仅展示；发货只看 notify 或主动查单 |
-| 验签失败仍写库 | 被伪造回调 | 先验 `PLATFORM_KEY`，失败返回 fail |
-| `trade_status` 未判断 | 非成功通知也发货 | 仅 `TRADE_SUCCESS` 时升级 |
+- 公网 **HTTPS** 回调到 **本站**  
+- 处理成功返回纯文本 **`success`**  
+- **幂等**：已 paid 不重复加期  
+- 官方 notify 为 **GET** 参数（见 pay_notify.html）
 
 ### return_url
 

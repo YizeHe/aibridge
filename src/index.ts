@@ -49,8 +49,10 @@ import {
   createPayOrder,
   handlePayNotify,
   PUBLIC_PLANS,
+  syncOrderPayment,
   type PayPlanId,
 } from './pay';
+import { generateSmsCode, maskPhone, normalizePhone, sendSmsCode } from './sms';
 import {
   deleteFile,
   getFile,
@@ -152,6 +154,25 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
 
   if ((method === 'POST' || method === 'GET') && path === '/api/pay/notify') {
     return handlePayNotify(env, req, url);
+  }
+
+  // 支付回站补单：查询平台订单并开通会员
+  if (method === 'POST' && path === '/api/pay/sync') {
+    if (!commercial) return json({ success: false, message: 'not found' }, 404);
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const body = await readJson<{ order_no?: string; out_trade_no?: string }>(req);
+    const orderNo = String(body.order_no || body.out_trade_no || '').trim();
+    if (!orderNo) return json({ success: false, message: '缺少订单号' }, 400);
+    const r = await syncOrderPayment(env, orderNo, u.id);
+    if (!r.ok) return json({ success: false, message: r.message }, 400);
+    const full = await getUserById(env.DB, u.id);
+    return json({
+      success: true,
+      message: r.message,
+      premium_until: r.premium_until,
+      user: full ? publicUser(full) : publicUser(u),
+    });
   }
 
   // ── Auth ──────────────────────────────────────────────
@@ -280,13 +301,123 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ success: true, api_key: key });
   }
 
-  // ── Redeem activation code ────────────────────────────
+  // ── Phone bind (激活码防白嫖) ─────────────────────────
+  if (method === 'POST' && path === '/api/phone/send-code') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const body = await readJson<{ phone?: string }>(req);
+    const phone = normalizePhone(String(body.phone || ''));
+    if (!phone) return json({ success: false, message: '请输入正确的中国大陆手机号' }, 400);
+
+    const full = await getUserById(env.DB, u.id);
+    if (full?.phone) {
+      return json({ success: false, message: '本账号已绑定手机号，每个账号只能绑定一个' }, 400);
+    }
+    const taken = await env.DB.prepare(
+      `SELECT id FROM users WHERE phone = ? AND id != ?`
+    )
+      .bind(phone, u.id)
+      .first();
+    if (taken) {
+      return json({ success: false, message: '该手机号已绑定其他账号' }, 400);
+    }
+
+    // 冷却 60s
+    const recent = await env.DB.prepare(
+      `SELECT created_at FROM sms_codes WHERE phone = ? AND purpose = 'bind'
+       ORDER BY id DESC LIMIT 1`
+    )
+      .bind(phone)
+      .first<{ created_at: string }>();
+    if (recent?.created_at) {
+      const t = Date.parse(recent.created_at);
+      if (!Number.isNaN(t) && Date.now() - t < 60_000) {
+        return json({ success: false, message: '发送太频繁，请稍后再试' }, 429);
+      }
+    }
+
+    const code = generateSmsCode();
+    const expires = new Date(Date.now() + 5 * 60_000).toISOString();
+    await env.DB.prepare(
+      `INSERT INTO sms_codes (phone, code, purpose, user_id, expires_at) VALUES (?, ?, 'bind', ?, ?)`
+    )
+      .bind(phone, code, u.id, expires)
+      .run();
+
+    const send = await sendSmsCode(env, phone, code);
+    if (!send.ok) return json({ success: false, message: send.msg }, 502);
+    return json({ success: true, message: '验证码已发送' });
+  }
+
+  if (method === 'POST' && path === '/api/phone/bind') {
+    const u = await sessionUser(env, req);
+    requireUser(u);
+    const body = await readJson<{ phone?: string; code?: string }>(req);
+    const phone = normalizePhone(String(body.phone || ''));
+    const code = String(body.code || '').trim();
+    if (!phone || !code) return json({ success: false, message: '请填写手机号与验证码' }, 400);
+
+    const full = await getUserById(env.DB, u.id);
+    if (full?.phone) {
+      return json({ success: false, message: '本账号已绑定手机号' }, 400);
+    }
+    const taken = await env.DB.prepare(
+      `SELECT id FROM users WHERE phone = ? AND id != ?`
+    )
+      .bind(phone, u.id)
+      .first();
+    if (taken) return json({ success: false, message: '该手机号已绑定其他账号' }, 400);
+
+    const row = await env.DB.prepare(
+      `SELECT id, code, expires_at FROM sms_codes
+       WHERE phone = ? AND purpose = 'bind' AND user_id = ?
+       ORDER BY id DESC LIMIT 1`
+    )
+      .bind(phone, u.id)
+      .first<{ id: number; code: string; expires_at: string }>();
+    if (!row || row.code !== code) {
+      return json({ success: false, message: '验证码错误' }, 400);
+    }
+    if (Date.parse(row.expires_at) < Date.now()) {
+      return json({ success: false, message: '验证码已过期' }, 400);
+    }
+
+    await env.DB.prepare(
+      `UPDATE users SET phone = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+    )
+      .bind(phone, u.id)
+      .run();
+    await env.DB.prepare(`DELETE FROM sms_codes WHERE phone = ? AND purpose = 'bind'`).bind(phone).run();
+
+    const updated = await getUserById(env.DB, u.id);
+    return json({
+      success: true,
+      message: '手机号绑定成功',
+      user: updated ? publicUser(updated) : publicUser(u),
+      phone_masked: maskPhone(phone),
+    });
+  }
+
+  // ── Redeem activation code（须已绑定手机） ────────────
   if (method === 'POST' && path === '/api/redeem') {
     const u = await sessionUser(env, req);
     requireUser(u);
     const body = await readJson<{ code?: string }>(req);
     const code = String(body.code || '').trim();
     if (!code) return json({ success: false, message: '请输入激活码' }, 400);
+
+    const full = await getUserById(env.DB, u.id);
+    if (!full) return json({ success: false, message: '用户不存在' }, 404);
+    if (!full.phone) {
+      return json(
+        {
+          success: false,
+          message: '请先绑定手机号后再使用激活码（防止白嫖，一账号一手机）',
+          need_phone: true,
+        },
+        403
+      );
+    }
 
     const row = await env.DB.prepare(
       `SELECT code, days, max_uses, used_count, enabled FROM redeem_codes WHERE code = ? COLLATE NOCASE`
@@ -311,9 +442,6 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       .first();
     if (used) return json({ success: false, message: '该激活码本账号已使用过' }, 400);
 
-    const full = await getUserById(env.DB, u.id);
-    if (!full) return json({ success: false, message: '用户不存在' }, 404);
-
     const now = Date.now();
     let base = now;
     if (full.plan === 'premium' && full.premium_until) {
@@ -337,7 +465,7 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const updated = await getUserById(env.DB, u.id);
     return json({
       success: true,
-      message: `激活成功，会员已延长 ${row.days} 天`,
+      message: `激活成功，会员有效期至 ${until.slice(0, 10)}`,
       user: updated ? publicUser(updated) : publicUser(u),
       premium_until: until,
     });

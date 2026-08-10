@@ -8,6 +8,10 @@ const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
 export function publicUser(u: UserRow | SessionUser) {
   const premium_until =
     'premium_until' in u ? (u as UserRow).premium_until ?? null : (u as SessionUser).premium_until ?? null;
+  const phone =
+    'phone' in u ? ((u as UserRow).phone ?? null) : null;
+  const masked =
+    phone && phone.length >= 7 ? phone.slice(0, 3) + '****' + phone.slice(-4) : '';
   return {
     id: u.id,
     username: u.username,
@@ -18,6 +22,8 @@ export function publicUser(u: UserRow | SessionUser) {
     created_at: 'created_at' in u ? (u as UserRow).created_at : undefined,
     premium_until: premium_until ?? null,
     is_premium: isPremiumActive({ plan: u.plan, premium_until }),
+    phone_bound: !!(phone && phone.length >= 11),
+    phone_masked: masked,
   };
 }
 

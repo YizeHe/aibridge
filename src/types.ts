@@ -19,6 +19,11 @@ export type Env = {
   SECRET?: string;
   TURNSTILE_SITEKEY?: string;
   TURNSTILE_SECRET?: string;
+  SMS_API_KEY?: string;
+  SMS_API_SECRET?: string;
+  SMS_API_BASE?: string;
+  SMS_TEMPLATE_CODE?: string;
+  SMS_SIGN_NAME?: string;
 };
 
 export type UserRow = {
@@ -30,6 +35,7 @@ export type UserRow = {
   banned: number;
   api_key: string;
   premium_until?: string | null;
+  phone?: string | null;
   created_at: string;
   updated_at: string;
 };

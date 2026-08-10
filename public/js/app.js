@@ -1464,6 +1464,23 @@ async function viewAdmin() {
   }
 }
 
+function formatPremiumUntil(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+    return d.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return String(iso).slice(0, 16);
+  }
+}
+
 async function viewAccount() {
   const u = await ensureUser();
   if (!u) {
@@ -1472,10 +1489,35 @@ async function viewAccount() {
   }
   const full = await API.get('/api/me');
   const user = full.user || u;
-  const memberLabel =
-    user.is_premium || user.plan === 'premium'
-      ? `已开通${user.premium_until ? ' · 至 ' + escapeHtml(String(user.premium_until).slice(0, 10)) : ''}`
-      : '未开通';
+  const active = !!(user.is_premium || (user.plan === 'premium' && user.is_premium !== false));
+  const untilText = user.premium_until ? formatPremiumUntil(user.premium_until) : '';
+  const memberHtml = active
+    ? `<div style="font-weight:600;color:var(--ok)">已开通会员</div>
+       <div style="margin-top:0.35rem;color:var(--text-dim);font-size:0.9rem">
+         有效期至：<strong style="color:var(--text)">${escapeHtml(untilText || '长期有效')}</strong>
+       </div>`
+    : `<div style="font-weight:600">未开通</div>
+       <div style="margin-top:0.35rem;color:var(--text-dim);font-size:0.9rem">开通后可创建不限数量项目</div>`;
+  const phoneHtml = user.phone_bound
+    ? `<div class="field">手机号
+         <div style="color:var(--text);font-weight:600">${escapeHtml(user.phone_masked || '已绑定')}</div>
+         <p style="margin:0.35rem 0 0;font-size:0.82rem;color:var(--text-faint)">每个账号仅可绑定一个手机号</p>
+       </div>`
+    : `<div class="field">手机号
+         <p style="margin:0 0 0.65rem;font-size:0.88rem;color:var(--text-dim);line-height:1.5">
+           使用激活码前须绑定手机（防止白嫖）。一账号一手机，不可更换。
+         </p>
+         <label class="field">手机号
+           <input id="bind-phone" type="tel" maxlength="11" placeholder="11 位手机号" autocomplete="tel" />
+         </label>
+         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-end">
+           <label class="field" style="flex:1;min-width:8rem;margin-bottom:0">验证码
+             <input id="bind-code" type="text" maxlength="8" placeholder="短信验证码" autocomplete="one-time-code" />
+           </label>
+           <button type="button" class="btn" id="send-sms">发送验证码</button>
+           <button type="button" class="btn btn-primary" id="bind-phone-btn">绑定</button>
+         </div>
+       </div>`;
   const el = $(`
     <div class="panel-wide liquid-glass">
       <h2 style="margin:0 0 1rem">账号</h2>
@@ -1491,17 +1533,11 @@ async function viewAccount() {
       ${
         state.commercial
           ? `<div class="field">会员
-            <div>${memberLabel}</div>
+            ${memberHtml}
           </div>
           <a class="btn btn-primary" href="#/billing" style="text-decoration:none">开通 / 续费</a>
           <hr style="border:0;border-top:1px solid var(--line);margin:1.25rem 0" />
-          <h3 style="margin:0 0 0.75rem;font-size:1rem">激活码</h3>
-          <form id="redeem">
-            <label class="field">输入激活码
-              <input name="code" required placeholder="新用户福利：RemoteAiGENT" autocomplete="off" />
-            </label>
-            <button class="btn" type="submit">兑换</button>
-          </form>`
+          ${phoneHtml}`
           : ''
       }
       <hr style="border:0;border-top:1px solid var(--line);margin:1.25rem 0" />
@@ -1539,13 +1575,23 @@ async function viewAccount() {
     setFlash(r.message || (r.success ? '密码已更新' : '更新失败'), !r.success);
     render();
   };
-  const redeemForm = el.querySelector('#redeem');
-  if (redeemForm) {
-    redeemForm.onsubmit = async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      const r = await API.post('/api/redeem', { code: fd.get('code') });
-      setFlash(r.message || (r.success ? '激活成功' : '激活失败'), !r.success);
+  const sendSms = el.querySelector('#send-sms');
+  if (sendSms) {
+    sendSms.onclick = async () => {
+      const phone = el.querySelector('#bind-phone')?.value?.trim() || '';
+      sendSms.disabled = true;
+      const r = await API.post('/api/phone/send-code', { phone });
+      sendSms.disabled = false;
+      setFlash(r.message || (r.success ? '验证码已发送' : '发送失败'), !r.success);
+    };
+  }
+  const bindBtn = el.querySelector('#bind-phone-btn');
+  if (bindBtn) {
+    bindBtn.onclick = async () => {
+      const phone = el.querySelector('#bind-phone')?.value?.trim() || '';
+      const code = el.querySelector('#bind-code')?.value?.trim() || '';
+      const r = await API.post('/api/phone/bind', { phone, code });
+      setFlash(r.message || (r.success ? '绑定成功' : '绑定失败'), !r.success);
       if (r.success && r.user) state.user = r.user;
       render();
     };
@@ -1574,13 +1620,13 @@ async function viewBilling() {
       <div class="section-head"><h2>会员</h2></div>
       <p style="color:var(--text-dim);margin:0 0 1.25rem;max-width:36rem;line-height:1.6">
         自助开通会员。支付成功后自动延长有效期。月付 5 元，年付 50 元。
-        开通后可创建不限数量项目。也可在下方使用激活码兑换。
+        开通后可创建不限数量项目。激活码兑换须先在账号页绑定手机号（防白嫖）。
       </p>
       <div class="price-grid" id="prices"></div>
       <section class="liquid-glass" style="margin-top:1.5rem;max-width:28rem">
         <h3 style="margin:0 0 0.75rem;font-size:1rem">激活码兑换</h3>
         <p style="margin:0 0 0.85rem;color:var(--text-dim);font-size:0.88rem;line-height:1.5">
-          输入激活码可延长会员有效期（每账号每个码仅可使用一次）。
+          须先绑定手机号。每账号每个码仅可使用一次。示例：新用户福利 RemoteAiGENT。
         </p>
         <form id="redeem-billing">
           <label class="field">激活码
@@ -1655,6 +1701,11 @@ async function viewBilling() {
       e.preventDefault();
       const fd = new FormData(e.target);
       const r = await API.post('/api/redeem', { code: fd.get('code') });
+      if (r.need_phone) {
+        setFlash(r.message || '请先绑定手机号后再使用激活码', true);
+        location.hash = '#/account';
+        return render();
+      }
       setFlash(r.message || (r.success ? '激活成功' : '激活失败'), !r.success);
       if (r.success && r.user) state.user = r.user;
       render();
@@ -1915,14 +1966,32 @@ window.addEventListener('hashchange', () => render());
 window.addEventListener('resize', () => initWorld(document.getElementById('world')));
 
 (async () => {
-  // 支付回站：?from=pay → 账号页看会员状态
+  // 支付回站：?from=pay&order= → 主动向平台查单补开会员
   try {
     const q = new URLSearchParams(location.search);
     if (q.get('from') === 'pay') {
-      const order = q.get('order') || '';
-      history.replaceState(null, '', location.pathname + (location.hash || '#/account'));
+      const order = q.get('order') || q.get('out_trade_no') || '';
+      history.replaceState(null, '', location.pathname + '#/account');
       location.hash = '#/account';
-      if (order) setFlash('支付结果处理中，若已付款请稍后刷新查看会员状态');
+      await ensureUser();
+      if (order && API.token) {
+        const r = await API.post('/api/pay/sync', { order_no: order });
+        if (r.success) {
+          if (r.user) state.user = r.user;
+          setFlash(
+            r.message ||
+              (r.premium_until
+                ? `会员已开通，有效期至 ${String(r.premium_until).slice(0, 10)}`
+                : '支付已确认')
+          );
+        } else {
+          setFlash(r.message || '支付确认中，请稍后刷新账号页', true);
+        }
+      } else {
+        setFlash('支付结果处理中，请稍后刷新账号页查看会员状态');
+      }
+      await render();
+      return;
     }
   } catch {
     /* */

@@ -113,9 +113,27 @@ export function siteBase(env: Env, req: Request): string {
   return `${u.protocol}//${u.host}`;
 }
 
+/**
+ * 异步回调必须指向本站。历史 secret 可能写成旧项目域名（如 vpnnode），
+ * 会导致付款成功但本站永远收不到 notify → 会员仍显示未开通。
+ */
 export function notifyUrl(env: Env, req: Request): string {
-  if (env.NOTIFY_URL) return env.NOTIFY_URL;
-  return `${siteBase(env, req)}/api/pay/notify`;
+  const base = siteBase(env, req);
+  const preferred = `${base}/api/pay/notify`;
+  const override = (env.NOTIFY_URL || '').trim();
+  if (!override) return preferred;
+  // 仅当 NOTIFY_URL 明显属于本站时才使用
+  try {
+    const u = new URL(override);
+    const host = u.hostname.toLowerCase();
+    const siteHost = new URL(base).hostname.toLowerCase();
+    if (host === siteHost || host.includes('aibridge')) {
+      return override.replace(/\/$/, '') || preferred;
+    }
+  } catch {
+    /* fall through */
+  }
+  return preferred;
 }
 
 function orderNo(): string {
@@ -262,89 +280,178 @@ function extendPremiumUntil(existing: string | null | undefined, plan: string): 
   return next.toISOString();
 }
 
+export type OrderRow = {
+  id: string;
+  user_id: number;
+  plan: string;
+  status: string;
+  amount?: number;
+  trade_no?: string | null;
+};
+
+/** 将本地订单标记已支付并延长会员（幂等） */
+export async function fulfillPaidOrder(
+  env: Env,
+  order: OrderRow,
+  tradeNo?: string | null
+): Promise<{ ok: true; premium_until: string | null } | { ok: false; error: string }> {
+  if (order.status === 'paid') {
+    const u = await env.DB.prepare(`SELECT premium_until FROM users WHERE id = ?`)
+      .bind(order.user_id)
+      .first<{ premium_until: string | null }>();
+    return { ok: true, premium_until: u?.premium_until ?? null };
+  }
+
+  const user = (await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
+    .bind(order.user_id)
+    .first()) as UserRow | null;
+  if (!user) return { ok: false, error: '用户不存在' };
+
+  const existing =
+    user.premium_until && Date.parse(user.premium_until) > Date.now()
+      ? user.premium_until
+      : null;
+  const premium_until = extendPremiumUntil(existing, order.plan);
+  const paidAt = new Date().toISOString();
+  const tn = tradeNo || order.trade_no || null;
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE users SET plan = 'premium', premium_until = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+    ).bind(premium_until, user.id),
+    env.DB.prepare(
+      `UPDATE orders SET status = 'paid', paid_at = ?, trade_no = COALESCE(?, trade_no) WHERE id = ?`
+    ).bind(paidAt, tn, order.id),
+  ]);
+  return { ok: true, premium_until };
+}
+
+/** 向支付平台查询订单状态 status=1 已支付 */
+export async function queryPlatformOrder(
+  env: Env,
+  outTradeNo: string
+): Promise<{ paid: boolean; trade_no?: string; raw?: unknown; error?: string }> {
+  const pid = env.MERCHANT_PID;
+  const merchantKey = env.MERCHANT_KEY;
+  if (!pid || !merchantKey) return { paid: false, error: '支付未配置' };
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const params: Record<string, string> = {
+    pid: String(pid),
+    out_trade_no: outTradeNo,
+    timestamp,
+    sign_type: 'RSA',
+  };
+  try {
+    params.sign = await rsaSign(params, merchantKey);
+    const resp = await fetch(`${PAY_HOST}/api/pay/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params).toString(),
+    });
+    const text = await resp.text();
+    let data: {
+      code?: number;
+      msg?: string;
+      status?: number | string;
+      trade_no?: string;
+      out_trade_no?: string;
+    };
+    try {
+      data = JSON.parse(text) as typeof data;
+    } catch {
+      return { paid: false, error: '查询返回非 JSON: ' + text.slice(0, 120) };
+    }
+    if (Number(data.code) !== 0) {
+      return { paid: false, error: data.msg || '查询失败', raw: data };
+    }
+    // 文档：status 1 为已支付
+    const paid = Number(data.status) === 1;
+    return { paid, trade_no: data.trade_no, raw: data };
+  } catch (e) {
+    return { paid: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 回站补单：查平台后履约 */
+export async function syncOrderPayment(
+  env: Env,
+  outTradeNo: string,
+  userId?: number
+): Promise<{ ok: boolean; message: string; premium_until?: string | null }> {
+  const order = await env.DB.prepare(`SELECT * FROM orders WHERE id = ?`)
+    .bind(outTradeNo)
+    .first<OrderRow>();
+  if (!order) return { ok: false, message: '订单不存在' };
+  if (userId != null && order.user_id !== userId) {
+    return { ok: false, message: '无权操作该订单' };
+  }
+  if (order.status === 'paid') {
+    const u = await env.DB.prepare(`SELECT premium_until FROM users WHERE id = ?`)
+      .bind(order.user_id)
+      .first<{ premium_until: string | null }>();
+    return { ok: true, message: '订单已支付', premium_until: u?.premium_until ?? null };
+  }
+
+  const q = await queryPlatformOrder(env, outTradeNo);
+  if (!q.paid) {
+    return {
+      ok: false,
+      message: q.error || '平台显示未支付，若已扣款请稍后刷新或联系客服',
+    };
+  }
+  const r = await fulfillPaidOrder(env, order, q.trade_no);
+  if (!r.ok) return { ok: false, message: r.error };
+  return { ok: true, message: '支付已确认，会员已开通', premium_until: r.premium_until };
+}
+
 /**
- * Handle platform notify. Returns plain "success" or "fail".
+ * Handle platform notify (官方：GET 异步通知 + return 跳转也可能带参).
+ * 返回纯文本 success / fail。
  */
 export async function handlePayNotify(
   env: Env,
   req: Request,
   url: URL
 ): Promise<Response> {
-  const platformKey = env.PLATFORM_KEY;
-  if (!platformKey) {
-    return new Response('fail', { status: 200, headers: { 'Content-Type': 'text/plain' } });
-  }
-
   const params = await parsePayParams(req, url);
-  const sign = params.sign;
-  if (!sign) {
-    return new Response('fail', { status: 200, headers: { 'Content-Type': 'text/plain' } });
-  }
-
-  const verifyParams: Record<string, string> = { ...params };
-  delete verifyParams.sign;
-
-  const valid = await rsaVerify(verifyParams, sign, platformKey);
-  if (!valid) {
-    return new Response('fail', { status: 200, headers: { 'Content-Type': 'text/plain' } });
-  }
-
-  if (params.trade_status !== 'TRADE_SUCCESS') {
-    return new Response('success', { status: 200, headers: { 'Content-Type': 'text/plain' } });
-  }
-
   const outTradeNo = params.out_trade_no;
   if (!outTradeNo) {
     return new Response('fail', { status: 200, headers: { 'Content-Type': 'text/plain' } });
   }
 
-  const order = await env.DB.prepare(`SELECT * FROM orders WHERE id = ?`)
-    .bind(outTradeNo)
-    .first<{
-      id: string;
-      user_id: number;
-      plan: string;
-      status: string;
-    }>();
-
-  if (!order) {
-    return new Response('fail', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+  // 有签名则验签；验签失败仍尝试主动 query 补单（防止密钥格式问题导致永不发货）
+  const platformKey = env.PLATFORM_KEY;
+  let signedOk = false;
+  if (platformKey && params.sign) {
+    const verifyParams: Record<string, string> = { ...params };
+    delete verifyParams.sign;
+    signedOk = await rsaVerify(verifyParams, params.sign, platformKey);
   }
-  if (order.status === 'paid') {
+
+  const tradeOk =
+    !params.trade_status || params.trade_status === 'TRADE_SUCCESS' || params.trade_status === '1';
+
+  if (signedOk && tradeOk) {
+    const order = await env.DB.prepare(`SELECT * FROM orders WHERE id = ?`)
+      .bind(outTradeNo)
+      .first<OrderRow>();
+    if (order) {
+      await fulfillPaidOrder(env, order, params.trade_no || null);
+    }
     return new Response('success', { status: 200, headers: { 'Content-Type': 'text/plain' } });
   }
 
-  const user = (await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
-    .bind(order.user_id)
-    .first()) as UserRow | null;
-
-  if (user) {
-    // extend premium_until from max(now, existing premium_until)
-    const existing =
-      user.premium_until && Date.parse(user.premium_until) > Date.now()
-        ? user.premium_until
-        : null;
-    const premium_until = extendPremiumUntil(existing, order.plan);
-    const tradeNo = params.trade_no || params.transaction_id || null;
-    const paidAt = new Date().toISOString();
-
-    await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE users SET plan = 'premium', premium_until = ?,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
-      ).bind(premium_until, user.id),
-      env.DB.prepare(
-        `UPDATE orders SET status = 'paid', paid_at = ?, trade_no = COALESCE(?, trade_no) WHERE id = ?`
-      ).bind(paidAt, tradeNo, order.id),
-    ]);
-  } else {
-    await env.DB.prepare(
-      `UPDATE orders SET status = 'paid', paid_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-       trade_no = COALESCE(?, trade_no) WHERE id = ?`
-    )
-      .bind(params.trade_no || null, order.id)
-      .run();
+  // 验签失败或无签名：用查询接口核对
+  const synced = await syncOrderPayment(env, outTradeNo);
+  if (synced.ok) {
+    return new Response('success', { status: 200, headers: { 'Content-Type': 'text/plain' } });
   }
 
-  return new Response('success', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+  // 非成功交易
+  if (params.trade_status && params.trade_status !== 'TRADE_SUCCESS') {
+    return new Response('success', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+  }
+  return new Response('fail', { status: 200, headers: { 'Content-Type': 'text/plain' } });
 }
