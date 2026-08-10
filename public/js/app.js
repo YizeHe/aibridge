@@ -98,7 +98,7 @@ function skillsBlock() {
     <section class="skills-block liquid-glass">
       <h3 style="margin:0;font-size:1.05rem">SKILLS（给 AI）</h3>
       <p style="margin:0;color:var(--text-dim);font-size:0.9rem;line-height:1.55">
-        复制提示词发给 AI（需登录，并选择一个项目；会带上 API Key 与项目名）。
+        登录后一键复制（含 API Key 与项目名）。仅有一个项目时直接复制；多个项目时先选择。
       </p>
       <div class="skills-actions">
         <button type="button" class="btn btn-primary" id="copy-skills-prompt">复制提示词给 AI</button>
@@ -215,7 +215,7 @@ function bindSkillsCopy(root) {
         return;
       }
       await navigator.clipboard.writeText(buildSkillsPrompt(apiKey, project.name));
-      setFlash(`提示词已复制（含 API Key 与项目「${project.name}」）`);
+      setFlash('复制成功！');
     } catch {
       setFlash('复制失败，请手动复制', true);
     }
@@ -414,7 +414,7 @@ function shell(content, opts = null) {
       <a href="#/ticket">工单</a>
       ${isRoot ? '<a href="#/kefu">客服台</a>' : ''}
       ${isAdmin ? '<a href="#/admin">用户管理</a>' : ''}
-      <a href="#/skills">安装提示词</a>
+      <a href="#/skills">SKILLS</a>
       <button type="button" class="nav-link" id="logout">退出</button>`;
     nav.querySelector('#logout').onclick = async () => {
       try {
@@ -430,7 +430,7 @@ function shell(content, opts = null) {
   } else {
     nav.innerHTML = `
       <a href="#/ticket">工单</a>
-      <a href="#/skills">安装提示词</a>
+      <a href="#/skills">SKILLS</a>
       <a href="#/login">登录</a>
       <a class="btn btn-primary" href="#/register" style="text-decoration:none">注册</a>`;
   }
@@ -463,11 +463,11 @@ function viewHome() {
   const heroActions = state.user
     ? `
           <a class="btn btn-primary" href="#/app" style="text-decoration:none">前往工作区</a>
-          <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>`
+          <a class="btn" href="#/skills" style="text-decoration:none">SKILLS</a>`
     : `
           <a class="btn btn-primary" href="#/register" style="text-decoration:none">立即注册</a>
           <a class="btn" href="#/login" style="text-decoration:none">登录</a>
-          <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>`;
+          <a class="btn" href="#/skills" style="text-decoration:none">SKILLS</a>`;
   const el = $(`
     <div class="home">
       <section class="hero">
@@ -478,13 +478,14 @@ function viewHome() {
         </div>
       </section>
 
-      <section class="pitch liquid-glass">
-        <h2>你是否也有这样的痛点？</h2>
+      <section class="pitch liquid-glass pitch-intro">
+        <h2>像 Codex Mobile 一样调用自家电脑上的 AI</h2>
         <p>
-          出门在外电脑不在身边，但用户突然反馈程序出 Bug，自己没法修复，最终耽误了客户，也影响了自己产品的信誉。
+          AIBridge 可以像 Codex Mobile 一样，让你随时调用自己电脑上的 AI。
+          适配市面上几乎所有 AI Coding 工具，无需安装庞大环境——只需给 AI 复制一段很短的提示词，AI 就能自行完成接入与操作。
         </p>
         <p>
-          不必担心，AIBridge 可以让你在世界各地都能够和自家的 AI 对话。只要您家里的电脑还开着机，就能在手机端或其他移动设备上给 AI 发送指令，极速修改！
+          只要家里的电脑还开着，你就能在手机或其他移动设备上发指令，远程驱动本地 AI 改代码、修 Bug，极速响应。
         </p>
         <p>
           本项目为开源项目，您完全可以部署在自己的服务器上，这样是完全免费的。开源地址：
@@ -493,6 +494,16 @@ function viewHome() {
         </p>
         <p>
           您也可以选择使用本平台，我们能够提供更加稳定 · 高效 · 便捷的服务。每月可以免费创建一个项目，或者花费 5 元人民币享受完全无限制服务，同时也享受客服技术支持。
+        </p>
+      </section>
+
+      <section class="pitch liquid-glass" style="margin-top:1.25rem">
+        <h2>你是否也有这样的痛点？</h2>
+        <p>
+          出门在外电脑不在身边，用户突然反馈程序出 Bug，自己没法立刻修复，最终耽误了客户，也影响了产品信誉。
+        </p>
+        <p>
+          不必担心：用 AIBridge，在世界各地都能和自家 AI 对话——家里电脑开机即可，手机一点，远程改完。
         </p>
       </section>
 
@@ -508,12 +519,12 @@ function viewHome() {
     },
     {
       title: '本地 Agent',
-      desc: 'Go 客户端或任意 HTTP 工具轮询待处理消息并推送回复。',
-      meta: ['说明', '安装提示词'],
+      desc: '轻量客户端，适配各类 AI Coding 工具，复制提示词即可接入。',
+      meta: ['说明', 'SKILLS'],
     },
     {
       title: '注册即用',
-      desc: '登录后即可复制提示词接入 AI，账号页管理 API Key。',
+      desc: '登录后复制提示词，带上 API Key 与项目名，AI 自行完成操作。',
       meta: ['鉴权', '会话 + Key'],
     },
   ];
@@ -662,7 +673,7 @@ async function viewProjects() {
       <div class="section-head">
         <h2>我的项目</h2>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
-          <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>
+          <a class="btn" href="#/skills" style="text-decoration:none">SKILLS</a>
           <button type="button" class="btn btn-primary" id="new-p">新建项目</button>
         </div>
       </div>
@@ -1484,7 +1495,7 @@ async function viewAccount() {
       <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0 1rem">
         <button type="button" class="btn" id="copy-key">复制 Key</button>
         <button type="button" class="btn" id="rotate-key">轮换 Key</button>
-        <a class="btn" href="#/skills" style="text-decoration:none">安装提示词</a>
+        <a class="btn" href="#/skills" style="text-decoration:none">SKILLS</a>
       </div>
       ${
         state.commercial
