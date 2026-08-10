@@ -3,6 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests" />
+  <script>
+    // 强制使用 HTTPS（生产域名）；本地 http://127.0.0.1 不受影响
+    (function () {
+      try {
+        var h = location.hostname;
+        if (h === 'localhost' || h === '127.0.0.1' || h.endsWith('.local')) return;
+        if (location.protocol === 'http:') {
+          location.replace('https://' + location.host + location.pathname + location.search + location.hash);
+        }
+      } catch (e) {}
+    })();
+  </script>
   <title>AIBridge</title>
   <meta name="description" content="AIBridge — 浏览器与本地 AI Agent 云端互通桥" />
   <meta name="color-scheme" content="light dark" />

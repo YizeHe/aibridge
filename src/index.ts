@@ -1106,7 +1106,18 @@ export default {
     }
 
     if (env.ASSETS) {
-      return env.ASSETS.fetch(req);
+      const assetRes = await env.ASSETS.fetch(req);
+      // 生产环境附加 HSTS，促使浏览器后续强制 HTTPS
+      if (!isLocal) {
+        const headers = new Headers(assetRes.headers);
+        headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+        return new Response(assetRes.body, {
+          status: assetRes.status,
+          statusText: assetRes.statusText,
+          headers,
+        });
+      }
+      return assetRes;
     }
     return json({ success: false, message: 'no assets' }, 404);
   },
