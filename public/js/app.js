@@ -1623,6 +1623,24 @@ async function viewBilling() {
         render();
         return;
       }
+      // 官方推荐 POST 表单跳转收银台 /api/pay/submit
+      if (r.payMethod === 'form' && r.payUrl && r.payFields) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = r.payUrl;
+        form.acceptCharset = 'UTF-8';
+        form.style.display = 'none';
+        for (const [k, v] of Object.entries(r.payFields)) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = k;
+          input.value = String(v ?? '');
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+        return;
+      }
       if (r.payUrl) {
         location.href = r.payUrl;
         return;

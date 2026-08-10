@@ -144,6 +144,8 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json({
       success: true,
       payUrl: r.payUrl,
+      payMethod: r.payMethod,
+      payFields: r.payFields,
       order_no: r.order_no,
     });
   }

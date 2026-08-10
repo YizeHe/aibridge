@@ -26,31 +26,49 @@
 
 商户后台对部分通道开启「强制跳转 / 安全验证」后，**禁止 API create**，只允许用户浏览器访问 **submit**。
 
-### 正确做法（当前实现）
+### 正确做法（当前实现 · 官方文档）
+
+文档：https://pay.ykmcn.com/doc/pay_submit.html  
+
+```text
+请求地址：https://pay.ykmcn.com/api/pay/submit
+请求方式：POST 或 GET（推荐 POST）
+```
+
+必填字段：`pid, type, out_trade_no, notify_url, return_url, name, money, timestamp, sign, sign_type`  
+**不要传** create 接口的 `method` / `clientip` / `device`（submit 文档无此字段，多传可能导致验签失败）。
 
 ```ts
 // 1. 本地建订单 orders
-// 2. 组装参数（无 method 字段）：pid, type, out_trade_no, notify_url, return_url,
-//    name, money, clientip, device, timestamp, sign_type
-// 3. RSA 签名 → sign
-// 4. 返回给前端：
-payUrl = `https://pay.ykmcn.com/api/pay/submit?` + URLSearchParams(params)
-// 5. 前端 location.href = payUrl
+// 2. 按 submit 文档组参 + RSA(SHA256WithRSA) 签名
+// 3. 返回前端：
+//    payUrl = https://pay.ykmcn.com/api/pay/submit
+//    payMethod = 'form'
+//    payFields = { ...signed params }
+// 4. 前端动态 form POST 到 payUrl（不要服务端代请求）
 ```
 
 ### 错误做法
 
 ```ts
-// ❌ 服务端 fetch create，再把 pay_info 给前端
-method: 'web'   // 易触发安全验证
-method: 'jump'  // 仍是 create API，照样可能报「请使用跳转支付接口」
+// ❌ 服务端 fetch create
+method: 'web' | 'jump'
 await fetch('https://pay.ykmcn.com/api/pay/create', ...)
+// 平台明确要求用户走「页面跳转支付」接口 submit
 ```
 
 ### return_url 注意
 
-- 不要用 `https://site/#/account`（平台追加 `?out_trade_no=` 时与 hash 冲突）  
+- 不要用 `https://site/#/account`（平台追加 query 与 hash 冲突）  
 - 用 `https://site/?from=pay&order=xxx`，前端识别后进 `#/account`  
+
+### 官方文档索引
+
+- 总览：https://pay.ykmcn.com/doc/  
+- 页面跳转支付：https://pay.ykmcn.com/doc/pay_submit.html  
+- 统一下单（API，本站不用）：https://pay.ykmcn.com/doc/pay_create.html  
+- 签名规则：https://pay.ykmcn.com/doc/sign_note.html  
+
 
 ---
 

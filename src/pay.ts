@@ -166,10 +166,10 @@ export async function parsePayParams(
 const PAY_HOST = 'https://pay.ykmcn.com';
 
 /**
- * 页面跳转支付（收银台）：用户浏览器直接打开已签名 URL。
- * 不要用服务端 POST /api/pay/create + method=web/jump —— 该通道会报
- * 「本次支付需要安全验证，请使用跳转支付接口发起支付」。
- * 正确接口是 /api/pay/submit（页面跳转），见 PAYLEARNS.md。
+ * 页面跳转支付（官方文档：pay_submit.html）
+ * POST/GET https://pay.ykmcn.com/api/pay/submit
+ * 推荐浏览器 POST 表单；勿用服务端 /api/pay/create（易触发安全验证）。
+ * 见 https://pay.ykmcn.com/doc/pay_submit.html 与 PAYLEARNS.md
  */
 export async function createPayOrder(
   env: Env,
@@ -178,7 +178,14 @@ export async function createPayOrder(
   plan: PayPlanId,
   payType: 'alipay' | 'wxpay'
 ): Promise<
-  | { ok: true; payUrl: string; order_no: string; trade_no?: string }
+  | {
+      ok: true;
+      payUrl: string;
+      payMethod: 'form';
+      payFields: Record<string, string>;
+      order_no: string;
+      trade_no?: string;
+    }
   | { ok: false; error: string; status: number }
 > {
   const pid = env.MERCHANT_PID;
@@ -191,7 +198,7 @@ export async function createPayOrder(
   const out_trade_no = orderNo();
   const base = siteBase(env, req);
   const notify_url = notifyUrl(env, req);
-  // 避免 return_url 带 #hash（平台追加 query 会乱）；回站后再进账号页
+  // 避免 return_url 带 #hash；回站后再进账号页
   const return_url = `${base}/?from=pay&order=${encodeURIComponent(out_trade_no)}`;
   const name = `AIBridge ${plan === 'monthly' ? '月付' : '年付'}`;
   const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -203,7 +210,7 @@ export async function createPayOrder(
     .bind(out_trade_no, userId, plan, amount, payType)
     .run();
 
-  // 跳转支付参数：无 method 字段；由浏览器访问 submit 入口
+  // 严格按官方「页面跳转支付」字段（不含 method / clientip / device）
   const payParams: Record<string, string> = {
     pid: String(pid),
     type: payType,
@@ -212,20 +219,17 @@ export async function createPayOrder(
     return_url,
     name,
     money: amount.toFixed(2),
-    clientip: clientIp(req),
-    device: 'pc',
     timestamp,
     sign_type: 'RSA',
   };
 
   try {
     payParams.sign = await rsaSign(payParams, merchantKey);
-    // 浏览器直接打开跳转支付入口（收银台页面）
-    const qs = new URLSearchParams(payParams).toString();
-    const payUrl = `${PAY_HOST}/api/pay/submit?${qs}`;
     return {
       ok: true,
-      payUrl,
+      payUrl: `${PAY_HOST}/api/pay/submit`,
+      payMethod: 'form',
+      payFields: payParams,
       order_no: out_trade_no,
     };
   } catch (e: unknown) {
@@ -234,7 +238,7 @@ export async function createPayOrder(
       .run();
     return {
       ok: false,
-      error: '支付接口异常: ' + (e instanceof Error ? e.message : String(e)),
+      error: '支付签名失败: ' + (e instanceof Error ? e.message : String(e)),
       status: 502,
     };
   }
