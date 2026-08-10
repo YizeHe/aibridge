@@ -11,8 +11,16 @@ AI 应自动完成：下载本地 Agent、确保云端项目存在、配置轮�
 
 ## 云端地址
 
-- 站点 / API 根：`https://aibridge.tanstudio.me`
+- 主域名：`https://aibridge.tanstudio.me`（Cloudflare Workers 路由已绑定；若 DNS 未指向 Cloudflare 可先用下方备用）
+- 备用（已上线可用）：`https://aibridge.tangent2533.workers.dev`
 - 健康检查：`GET /api/health`
+
+Agent 默认 base 为 `https://aibridge.tanstudio.me`；若域名暂时不可用，启动时加：
+
+```bash
+./aibridge -base https://aibridge.tangent2533.workers.dev -key ak_xxx -project my-project
+```
+
 
 ## 本地 Agent（Go 可执行文件）
 
