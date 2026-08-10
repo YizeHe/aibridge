@@ -208,8 +208,56 @@ html.dark .orb--blue {
 .page {
   width: min(1120px, 100%);
   margin: 0 auto;
-  padding: 1.5rem clamp(1rem, 3vw, 1.75rem) 3.5rem;
+  padding: 1.5rem clamp(1rem, 3vw, 1.75rem) 1.5rem;
   flex: 1;
+}
+
+/* 聊天页：占满视口，输入栏贴底不随消息滚走 */
+.page.page-chat {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 100%);
+  max-width: 100%;
+  height: calc(100vh - var(--header-h) - var(--footer-h, 44px));
+  max-height: calc(100dvh - var(--header-h) - var(--footer-h, 44px));
+  padding-top: 0.65rem;
+  padding-bottom: 0.5rem;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.page.page-chat > .page-back {
+  flex-shrink: 0;
+  margin-bottom: 0.35rem;
+}
+.page.page-chat > .chat-layout {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.site-footer {
+  --footer-h: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  height: var(--footer-h);
+  padding: 0 1rem;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: blur(10px);
+}
+.site-footer a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-weight: 560;
+}
+.site-footer a:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 /* ---------- Buttons & forms ---------- */
@@ -659,8 +707,8 @@ html.dark .lg-surface {
 .chat-layout {
   display: grid;
   grid-template-rows: auto 1fr;
-  height: calc(100vh - var(--header-h) - 1.25rem);
-  min-height: 420px;
+  height: calc(100vh - var(--header-h) - var(--footer-h, 44px) - 1.25rem);
+  min-height: 0;
   gap: 0.65rem;
 }
 
@@ -978,6 +1026,17 @@ html.dark .msg-md pre {
   display: flex;
   gap: 0.5rem;
   align-items: flex-end;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: 0.45rem 0 0.15rem;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--bg) 88%, transparent) 28%,
+    var(--bg) 100%
+  );
 }
 .chat-compose textarea {
   flex: 1;

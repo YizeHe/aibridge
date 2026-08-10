@@ -29,27 +29,38 @@ Agent 默认 base：
 
 ## 本地 Agent（Go 可执行文件）
 
-发布页（GitHub Releases）：
+### 直接下载（推荐）
 
-```
-https://github.com/YizeHe/aibridge/releases/latest
-```
-
-按操作系统下载对应二进制（示例名）：
-
-| 平台 | 文件 |
+| 平台 | 下载 |
 |------|------|
-| Windows amd64 | `aibridge-windows-amd64.exe` |
-| Linux amd64 | `aibridge-linux-amd64` |
-| macOS arm64 | `aibridge-darwin-arm64` |
-| macOS amd64 | `aibridge-darwin-amd64` |
+| Windows amd64 | https://aibridge.tanstudio.me/downloads/aibridge-windows-amd64.exe |
 
-也可从源码构建：
+源码构建：
 
 ```bash
 git clone https://github.com/YizeHe/aibridge.git
 cd aibridge/client
 go build -o aibridge .
+```
+
+### 工作目录（本地文件）
+
+客户端默认读取当前工作目录（`-workdir`，或环境变量 `AIBRIDGE_WORKDIR`）：
+
+```bash
+# 列出本地工作目录文件
+./aibridge -key ak_xxx -project my-project -workdir . -local-list
+
+# 读取本地文件
+./aibridge -key ak_xxx -project my-project -workdir . -local-read README.md
+
+# 上传本地文件到云端项目工作区
+./aibridge -key ak_xxx -project my-project -workdir . -put-file src/main.go -as src/main.go
+
+# 本地 HTTP（含 workdir API）
+./aibridge -key ak_xxx -project my-project -workdir . -serve 127.0.0.1:5565
+# GET http://127.0.0.1:5565/api/workdir/list
+# GET http://127.0.0.1:5565/api/workdir/read?path=README.md
 ```
 
 ## 一键配置（AI 执行）

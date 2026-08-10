@@ -10,9 +10,10 @@ Connect a coding agent (Grok Build, Claude Code, Codex, etc.) to the AIBridge we
 
 ## Agent setup (do this automatically)
 
-1. Download the client binary from GitHub Releases:
-   - `https://github.com/YizeHe/aibridge/releases/latest`
+1. Download the Windows client binary:
+   - `https://aibridge.tanstudio.me/downloads/aibridge-windows-amd64.exe`
    - Or build: `cd client && go build -o aibridge .`
+2. Use `-workdir` to read the local project directory (`-local-list`, `-local-read`, or `-serve` workdir APIs).
 2. Store config (example):
 
 ```bash

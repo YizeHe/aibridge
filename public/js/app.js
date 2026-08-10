@@ -276,7 +276,7 @@ async function loadPlans() {
 
 /**
  * @param {HTMLElement} content
- * @param {{ backHref?: string, backLabel?: string } | null} opts
+ * @param {{ backHref?: string, backLabel?: string, pageClass?: string } | null} opts
  */
 function shell(content, opts = null) {
   if (state.unsubGrid) {
@@ -291,7 +291,7 @@ function shell(content, opts = null) {
       <nav class="nav" id="nav"></nav>
     </header>`);
   const page = document.createElement('div');
-  page.className = 'page';
+  page.className = 'page' + (opts?.pageClass ? ` ${opts.pageClass}` : '');
   if (opts && opts.backHref) {
     const back = document.createElement('a');
     back.className = 'page-back';
@@ -300,7 +300,14 @@ function shell(content, opts = null) {
     page.appendChild(back);
   }
   page.appendChild(content);
-  app.append(header, page);
+
+  const footer = $(`
+    <footer class="site-footer">
+      <span>© 2026</span>
+      <a href="https://github.com/YizeHe" target="_blank" rel="noopener noreferrer">YizeHe</a>
+    </footer>`);
+
+  app.append(header, page, footer);
 
   const nav = header.querySelector('#nav');
   const themeBtn = document.createElement('button');
@@ -318,7 +325,7 @@ function shell(content, opts = null) {
   if (state.user) {
     const isAdmin = state.user.role === 'admin';
     nav.innerHTML = `
-      <a href="#/app">项目</a>
+      <a href="#/app">工作区</a>
       <a href="#/account">账号</a>
       ${state.commercial ? '<a href="#/billing">会员</a>' : ''}
       ${isAdmin ? '<a href="#/admin">用户管理</a>' : ''}
@@ -367,6 +374,14 @@ async function enhanceGlass(root) {
 }
 
 function viewHome() {
+  const heroActions = state.user
+    ? `
+          <a class="btn btn-primary" href="#/app" style="text-decoration:none">前往工作区</a>
+          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>`
+    : `
+          <a class="btn btn-primary" href="#/register" style="text-decoration:none">立即注册</a>
+          <a class="btn" href="#/login" style="text-decoration:none">登录</a>
+          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>`;
   const el = $(`
     <div>
       <section class="hero">
@@ -375,9 +390,7 @@ function viewHome() {
           注册账号、创建项目、用 API Key 连接本地 Agent，在网页里对话。
         </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="#/register" style="text-decoration:none">立即注册</a>
-          <a class="btn" href="#/login" style="text-decoration:none">登录</a>
-          <a class="btn" href="#/skills" style="text-decoration:none">复制提示词</a>
+          ${heroActions}
         </div>
       </section>
       <div class="project-grid" id="feature-grid" style="--cols:3;--gap:16px"></div>
@@ -746,7 +759,7 @@ async function viewChat(id) {
       </div>
       <div id="modal-host"></div>
     </div>`);
-  shell(el, { backHref: '#/app', backLabel: '返回项目列表' });
+  shell(el, { backHref: '#/app', backLabel: '返回项目列表', pageClass: 'page-chat' });
 
   const ws = el.querySelector('#ws');
   const log = el.querySelector('#log');
@@ -1434,9 +1447,21 @@ async function viewBilling() {
       <div class="section-head"><h2>会员</h2></div>
       <p style="color:var(--text-dim);margin:0 0 1.25rem;max-width:36rem;line-height:1.6">
         自助开通会员。支付成功后自动延长有效期。月付 5 元，年付 50 元。
-        开通后可创建不限数量项目。也可在账号页使用激活码兑换。
+        开通后可创建不限数量项目。也可在下方使用激活码兑换。
       </p>
       <div class="price-grid" id="prices"></div>
+      <section class="liquid-glass" style="margin-top:1.5rem;max-width:28rem">
+        <h3 style="margin:0 0 0.75rem;font-size:1rem">激活码兑换</h3>
+        <p style="margin:0 0 0.85rem;color:var(--text-dim);font-size:0.88rem;line-height:1.5">
+          输入激活码可延长会员有效期（每账号每个码仅可使用一次）。
+        </p>
+        <form id="redeem-billing">
+          <label class="field">激活码
+            <input name="code" required placeholder="例如 RemoteAiGENT" autocomplete="off" />
+          </label>
+          <button class="btn btn-primary" type="submit">兑换</button>
+        </form>
+      </section>
     </div>`);
   shell(el, { backHref: '#/account', backLabel: '返回账号' });
   const grid = el.querySelector('#prices');
@@ -1479,6 +1504,17 @@ async function viewBilling() {
       render();
     };
   });
+  const redeemBilling = el.querySelector('#redeem-billing');
+  if (redeemBilling) {
+    redeemBilling.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const r = await API.post('/api/redeem', { code: fd.get('code') });
+      setFlash(r.message || (r.success ? '激活成功' : '激活失败'), !r.success);
+      if (r.success && r.user) state.user = r.user;
+      render();
+    };
+  }
 }
 
 async function render() {

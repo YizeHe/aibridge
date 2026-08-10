@@ -14,3 +14,13 @@ client/*.exe
 .env.*
 # payment / merchant secrets (local only, never push)
 key/
+# large binaries hosted via wrangler assets, not git
+public/downloads/*.exe
+public/downloads/*.bin
+# local screenshots / design refs
+*.jpg
+*.jpeg
+*.png
+!public/favicon.jpg
+download.jpg
+截图*.jpg
