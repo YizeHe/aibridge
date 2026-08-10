@@ -254,7 +254,7 @@ function viewHome() {
   ];
   for (const f of features) {
     const card = document.createElement('article');
-    card.className = 'liquid-glass project-card';
+    card.className = 'liquid-glass project-card feature-card';
     card.dataset.liquidGlass = '';
     card.dataset.preset = 'soft';
     card.dataset.scale = '42';

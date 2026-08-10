@@ -476,6 +476,24 @@ html.dark .project-card .actions button {
   background: var(--accent-soft);
 }
 
+/* 首页三张特性卡片：标题 / 说明 / 底栏全部居中 */
+.feature-card,
+.feature-card .lg-content {
+  text-align: center;
+  align-items: center;
+}
+.feature-card h3,
+.feature-card p {
+  text-align: center;
+  width: 100%;
+}
+.feature-card .meta {
+  justify-content: center;
+  width: 100%;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
 /* Panels */
 .panel {
   width: min(420px, 100%);
