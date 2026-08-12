@@ -5,29 +5,55 @@
 
 const ORB_COUNT = 6;
 
-export function initWorld(root) {
+/** 背景球只生成一次，翻页 / resize 不再重排，避免「背景跟着变」 */
+let worldSeeded = false;
+
+/**
+ * @param {HTMLElement | null} root
+ * @param {{ force?: boolean }} [opts] force=true 仅主题切换等少数场景重建
+ */
+export function initWorld(root, opts = {}) {
   if (!root) return;
-  // remove previous orbs
+  const force = !!opts.force;
+  if (worldSeeded && !force && root.querySelector('.orb')) return;
+
   root.querySelectorAll('.orb').forEach((n) => n.remove());
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  const w = window.innerWidth || 1200;
+  const h = window.innerHeight || 800;
+
+  // 固定布局：用确定性位置，不随机跳变
+  const slots = [
+    { left: 8, top: 12, pink: true, size: 0.38 },
+    { left: 62, top: 8, pink: false, size: 0.42 },
+    { left: 78, top: 48, pink: true, size: 0.32 },
+    { left: 12, top: 58, pink: false, size: 0.36 },
+    { left: 42, top: 72, pink: true, size: 0.28 },
+    { left: 55, top: 32, pink: false, size: 0.3 },
+  ];
+
   for (let i = 0; i < ORB_COUNT; i++) {
+    const s = slots[i] || slots[i % slots.length];
     const orb = document.createElement('div');
-    const pink = i % 2 === 0;
-    orb.className = `orb ${pink ? 'orb--pink' : 'orb--blue'}`;
-    const size = Math.round(Math.min(w, h) * (0.22 + Math.random() * 0.28));
+    orb.className = `orb ${s.pink ? 'orb--pink' : 'orb--blue'}`;
+    const size = Math.round(Math.min(w, h) * s.size);
     orb.style.width = size + 'px';
     orb.style.height = size + 'px';
-    orb.style.left = Math.round(Math.random() * 85) + '%';
-    orb.style.top = Math.round(Math.random() * 80) + '%';
-    orb.style.setProperty('--dur', 14 + Math.random() * 12 + 's');
-    orb.style.setProperty('--delay', -Math.random() * 10 + 's');
-    orb.style.setProperty('--dx1', (20 + Math.random() * 40) * (Math.random() > 0.5 ? 1 : -1) + 'px');
-    orb.style.setProperty('--dy1', (16 + Math.random() * 30) * (Math.random() > 0.5 ? 1 : -1) + 'px');
-    orb.style.setProperty('--dx2', (18 + Math.random() * 36) * (Math.random() > 0.5 ? 1 : -1) + 'px');
-    orb.style.setProperty('--dy2', (14 + Math.random() * 28) * (Math.random() > 0.5 ? 1 : -1) + 'px');
+    orb.style.left = s.left + '%';
+    orb.style.top = s.top + '%';
+    // 极慢漂移，几乎不打扰；翻页时位置不变
+    orb.style.setProperty('--dur', `${28 + i * 4}s`);
+    orb.style.setProperty('--delay', `${-i * 3}s`);
+    orb.style.setProperty('--dx1', `${12 + i * 2}px`);
+    orb.style.setProperty('--dy1', `${-10 - i}px`);
+    orb.style.setProperty('--dx2', `${-8 - i}px`);
+    orb.style.setProperty('--dy2', `${8 + i}px`);
     root.appendChild(orb);
   }
+  worldSeeded = true;
+}
+
+export function resetWorldSeed() {
+  worldSeeded = false;
 }
 
 /**

@@ -106,6 +106,19 @@ function buildSkillsPrompt(apiKey, projectName) {
   ].join('\n');
 }
 
+/** 弹层必须挂 body：.liquid-glass 有 isolation:isolate，卡片内 fixed 会被下方卡片挡住点击 */
+function getBodyModalHost() {
+  let host = document.getElementById('aibridge-modal-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'aibridge-modal-host';
+    document.body.appendChild(host);
+  } else if (host.parentElement !== document.body) {
+    document.body.appendChild(host);
+  }
+  return host;
+}
+
 /** 给 AI 用的 SKILLS：仅一键复制提示词（含 API Key + 所选项目） */
 function skillsBlock() {
   return `
@@ -117,7 +130,6 @@ function skillsBlock() {
       <div class="skills-actions">
         <button type="button" class="btn btn-primary" id="copy-skills-prompt">复制提示词给 AI</button>
       </div>
-      <div id="skills-modal-host"></div>
     </section>`;
 }
 
@@ -161,27 +173,30 @@ function pickProjectForCopy(host) {
       resolve(choices[0]);
       return;
     }
-    if (!host) {
-      resolve(choices[0]);
-      return;
-    }
-    host.innerHTML = `
-      <div class="modal-mask" id="pick-project-modal">
-        <div class="modal-card">
-          <h3>选择项目</h3>
+    // 始终挂 body，避免被下方玻璃卡片挡住
+    const mount = getBodyModalHost();
+    let selectedId = Number(choices[0].id);
+    mount.innerHTML = `
+      <div class="modal-mask" id="pick-project-modal" role="dialog" aria-modal="true" aria-labelledby="pick-project-title">
+        <div class="modal-card pick-project-card">
+          <h3 id="pick-project-title">选择项目</h3>
           <p style="margin:0 0 0.85rem;color:var(--text-dim);font-size:0.88rem;line-height:1.5">
-            提示词将写入所选项目名称，方便 AI 直接对接。
+            提示词将写入所选项目名称，方便 AI 直接对接。点击一行选中后确认复制。
           </p>
-          <div class="field">
-            <label for="pick-project-select">项目</label>
-            <select id="pick-project-select" style="width:100%;padding:0.65rem 0.8rem;border-radius:12px;border:1px solid var(--line);background:color-mix(in srgb, var(--bg) 70%, #fff)">
-              ${choices
-                .map(
-                  (p) =>
-                    `<option value="${p.id}">${escapeHtml(p.name)}${p.locked ? '（已锁定）' : ''}</option>`
-                )
-                .join('')}
-            </select>
+          <div class="project-pick-list" role="listbox" aria-label="项目列表">
+            ${choices
+              .map(
+                (p, i) => `
+              <button type="button"
+                class="project-pick-item${i === 0 ? ' is-selected' : ''}"
+                role="option"
+                aria-selected="${i === 0 ? 'true' : 'false'}"
+                data-id="${p.id}">
+                <span class="project-pick-name">${escapeHtml(p.name)}</span>
+                ${p.locked ? '<span class="project-pick-tag">已锁定</span>' : ''}
+              </button>`
+              )
+              .join('')}
           </div>
           <div class="modal-actions">
             <button type="button" class="btn" id="pick-cancel">取消</button>
@@ -189,16 +204,52 @@ function pickProjectForCopy(host) {
           </div>
         </div>
       </div>`;
-    host.querySelector('#pick-cancel').onclick = () => {
-      host.innerHTML = '';
-      resolve(null);
+
+    const listEl = mount.querySelector('.project-pick-list');
+    const syncSelection = (id) => {
+      selectedId = id;
+      listEl.querySelectorAll('.project-pick-item').forEach((btn) => {
+        const on = Number(btn.getAttribute('data-id')) === id;
+        btn.classList.toggle('is-selected', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
     };
-    host.querySelector('#pick-ok').onclick = () => {
-      const sel = host.querySelector('#pick-project-select');
-      const id = Number(sel.value);
-      const p = choices.find((x) => Number(x.id) === id) || choices[0];
-      host.innerHTML = '';
-      resolve(p);
+    listEl.querySelectorAll('.project-pick-item').forEach((btn) => {
+      btn.onclick = () => syncSelection(Number(btn.getAttribute('data-id')));
+      btn.ondblclick = () => {
+        syncSelection(Number(btn.getAttribute('data-id')));
+        mount.querySelector('#pick-ok')?.click();
+      };
+    });
+
+    const close = (value) => {
+      mount.innerHTML = '';
+      resolve(value);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        document.removeEventListener('keydown', onKey);
+        close(null);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+
+    mount.querySelector('#pick-cancel').onclick = () => {
+      document.removeEventListener('keydown', onKey);
+      close(null);
+    };
+    mount.querySelector('#pick-ok').onclick = () => {
+      document.removeEventListener('keydown', onKey);
+      const p = choices.find((x) => Number(x.id) === selectedId) || choices[0];
+      close(p);
+    };
+    // 点遮罩空白关闭（点卡片不关）
+    mount.querySelector('#pick-project-modal').onclick = (e) => {
+      if (e.target && e.target.id === 'pick-project-modal') {
+        document.removeEventListener('keydown', onKey);
+        close(null);
+      }
     };
   });
 }
@@ -213,16 +264,7 @@ function bindSkillsCopy(root) {
         setFlash('请先登录后再复制（提示词需带上你的 API Key）', true);
         return;
       }
-      const host =
-        root.querySelector('#skills-modal-host') ||
-        document.getElementById('skills-modal-host') ||
-        (() => {
-          const d = document.createElement('div');
-          d.id = 'skills-modal-host';
-          document.body.appendChild(d);
-          return d;
-        })();
-      const project = await pickProjectForCopy(host);
+      const project = await pickProjectForCopy(getBodyModalHost());
       if (!project) return;
       if (project.locked) {
         setFlash('该项目在免费额度下不可用，请开通会员或选择可用项目', true);
@@ -236,20 +278,93 @@ function bindSkillsCopy(root) {
   };
 }
 
-function loadTurnstileScript() {
+function isTurnstileReady() {
+  return typeof window.turnstile?.render === 'function';
+}
+
+/** 等 turnstile.render 真正可用（仅存在 window.turnstile 对象不够） */
+function waitTurnstileReady(timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
-    if (window.turnstile) return resolve();
-    const existing = document.getElementById('cf-turnstile-script');
-    if (existing) {
-      existing.addEventListener('load', () => resolve());
+    if (isTurnstileReady()) {
+      resolve();
       return;
     }
+    const started = Date.now();
+    let settled = false;
+    const done = (err) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      if (err) reject(err);
+      else resolve();
+    };
+    const tick = () => {
+      if (isTurnstileReady()) {
+        // ready() 再稳一层（若有）
+        if (typeof window.turnstile.ready === 'function') {
+          try {
+            window.turnstile.ready(() => done());
+            return;
+          } catch {
+            /* fall through */
+          }
+        }
+        done();
+        return;
+      }
+      if (Date.now() - started > timeoutMs) {
+        done(new Error('人机验证加载超时，请刷新页面重试'));
+      }
+    };
+    const timer = setInterval(tick, 50);
+    tick();
+  });
+}
+
+function loadTurnstileScript() {
+  return new Promise((resolve, reject) => {
+    if (isTurnstileReady()) {
+      resolve();
+      return;
+    }
+
+    const finish = () => {
+      waitTurnstileReady()
+        .then(resolve)
+        .catch(reject);
+    };
+
+    const existing = document.getElementById('cf-turnstile-script');
+    if (existing) {
+      // 脚本标签已在但可能 load 已触发，不能只绑 load
+      if (isTurnstileReady() || existing.dataset.loaded === '1') {
+        finish();
+        return;
+      }
+      existing.addEventListener('load', () => {
+        existing.dataset.loaded = '1';
+        finish();
+      });
+      existing.addEventListener('error', () =>
+        reject(new Error('Turnstile 脚本加载失败'))
+      );
+      // 已完成加载但 render 尚未挂上：轮询兜底
+      finish();
+      return;
+    }
+
     const s = document.createElement('script');
     s.id = 'cf-turnstile-script';
-    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    // explicit：禁止隐式自动渲染；onload 后仍可能要等 render 挂上
+    s.src =
+      'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
     s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Turnstile 脚本加载失败'));
+    s.defer = true;
+    s.onload = () => {
+      s.dataset.loaded = '1';
+      finish();
+    };
+    s.onerror = () => reject(new Error('Turnstile 脚本加载失败，请检查网络或广告拦截'));
     document.head.appendChild(s);
   });
 }
@@ -259,31 +374,72 @@ async function mountTurnstile(container, siteKey) {
   if (!siteKey) {
     container.innerHTML =
       '<div class="field" style="color:var(--danger)">未配置 Turnstile Site Key</div>';
-    return { getToken: () => '' };
+    return { getToken: () => '', reset: () => {} };
   }
+  container.innerHTML =
+    '<div class="field" style="color:var(--text-dim);font-size:0.88rem">人机验证加载中…</div>';
+
   await loadTurnstileScript();
+  if (!isTurnstileReady()) {
+    throw new Error('Turnstile render 不可用，请刷新页面重试');
+  }
+
+  container.innerHTML = '';
   const holder = document.createElement('div');
+  holder.className = 'cf-turnstile-host';
   container.appendChild(holder);
+
   let token = '';
-  const widgetId = window.turnstile.render(holder, {
-    sitekey: siteKey,
-    theme: getTheme() === 'dark' ? 'dark' : 'light',
-    callback: (t) => {
-      token = t || '';
-    },
-    'expired-callback': () => {
-      token = '';
-    },
-    'error-callback': () => {
-      token = '';
-    },
-  });
+  let widgetId = null;
+
+  const doRender = () => {
+    widgetId = window.turnstile.render(holder, {
+      sitekey: siteKey,
+      theme: getTheme() === 'dark' ? 'dark' : 'light',
+      callback: (t) => {
+        token = t || '';
+      },
+      'expired-callback': () => {
+        token = '';
+      },
+      'error-callback': () => {
+        token = '';
+      },
+    });
+  };
+
+  if (typeof window.turnstile.ready === 'function') {
+    await new Promise((resolve, reject) => {
+      try {
+        window.turnstile.ready(() => {
+          try {
+            doRender();
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+      } catch (e) {
+        try {
+          doRender();
+          resolve();
+        } catch (e2) {
+          reject(e2);
+        }
+      }
+    });
+  } else {
+    doRender();
+  }
+
   return {
     getToken: () => token,
     reset: () => {
       token = '';
       try {
-        window.turnstile.reset(widgetId);
+        if (widgetId != null && window.turnstile?.reset) {
+          window.turnstile.reset(widgetId);
+        }
       } catch {
         /* */
       }
@@ -381,6 +537,11 @@ function shell(content, opts = null) {
   }
   const app = document.getElementById('app');
   app.innerHTML = '';
+  const isChat = opts?.pageClass === 'page-chat';
+  // 对话页：锁 body，禁止整页滚动/翻页感
+  document.body.classList.toggle('chat-mode', !!isChat);
+  document.documentElement.classList.toggle('chat-mode', !!isChat);
+
   const header = $(`
     <header class="topbar">
       <a class="brand" href="#/">AIBridge</a>
@@ -403,7 +564,15 @@ function shell(content, opts = null) {
       <a href="https://github.com/YizeHe" target="_blank" rel="noopener noreferrer">YizeHe</a>
     </footer>`);
 
-  app.append(header, page, footer);
+  // 对话页不展示页脚，省出底部给输入框
+  if (isChat) {
+    app.append(header, page);
+  } else {
+    app.append(header, page, footer);
+  }
+
+  // 背景只初始化一次，翻页不重建
+  initWorld(document.getElementById('world'));
 
   const nav = header.querySelector('#nav');
   const themeBtn = document.createElement('button');
@@ -415,7 +584,7 @@ function shell(content, opts = null) {
   themeBtn.onclick = () => {
     toggleTheme();
     themeBtn.innerHTML = themeIcon();
-    initWorld(document.getElementById('world'));
+    // 主题切换只改 CSS 变量，不重排背景球
   };
 
   if (state.user) {
@@ -631,11 +800,36 @@ async function viewRegister() {
       已有账号？ <a href="#/login">登录</a>
     </p>`;
   shell(el, { backHref: '#/', backLabel: '返回首页' });
+  const tsBox = el.querySelector('#turnstile');
   let ts = { getToken: () => '', reset: () => {} };
   try {
-    ts = await mountTurnstile(el.querySelector('#turnstile'), state.turnstileSiteKey);
+    if (!state.turnstileSiteKey) {
+      tsBox.innerHTML =
+        '<div class="field" style="color:var(--danger)">未配置人机验证，暂时无法注册</div>';
+    } else {
+      ts = await mountTurnstile(tsBox, state.turnstileSiteKey);
+    }
   } catch (err) {
-    setFlash(err.message || '人机验证加载失败', true);
+    console.error('turnstile mount', err);
+    const msg = err?.message || '人机验证加载失败';
+    tsBox.innerHTML = `<div class="field" style="color:var(--danger)">${escapeHtml(msg)}。请刷新页面，或关闭广告拦截后重试。<button type="button" class="btn" id="ts-retry" style="margin-top:0.5rem">重新加载验证</button></div>`;
+    setFlash(msg, true);
+    el.querySelector('#ts-retry')?.addEventListener('click', async () => {
+      try {
+        // 清掉半残 turnstile，强制重载脚本
+        const old = document.getElementById('cf-turnstile-script');
+        if (old) old.remove();
+        try {
+          delete window.turnstile;
+        } catch {
+          window.turnstile = undefined;
+        }
+        ts = await mountTurnstile(tsBox, state.turnstileSiteKey);
+        setFlash('人机验证已加载');
+      } catch (e2) {
+        setFlash(e2?.message || '仍无法加载人机验证', true);
+      }
+    });
   }
   el.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault();
@@ -913,7 +1107,9 @@ async function viewChat(id) {
   const btnMd = el.querySelector('#ed-md-toggle');
   const modalHost = el.querySelector('#modal-host');
 
-  function paintMessages() {
+  function paintMessages(forceScroll = false) {
+    const nearBottom =
+      forceScroll || log.scrollHeight - log.scrollTop - log.clientHeight < 100;
     log.innerHTML = '';
     for (const m of state.messages) {
       const b = document.createElement('div');
@@ -921,9 +1117,9 @@ async function viewChat(id) {
       b.innerHTML = `<div class="who">${m.role === 'user' ? '我' : 'Agent'} · ${fmtTime(m.ts || m.created_at)}</div><div class="msg-md">${md(m.text)}</div>`;
       log.appendChild(b);
     }
-    log.scrollTop = log.scrollHeight;
+    if (nearBottom) log.scrollTop = log.scrollHeight;
   }
-  paintMessages();
+  paintMessages(true);
 
   function updateShellClass() {
     ws.classList.toggle('files-open', filesOpen);
@@ -2104,7 +2300,27 @@ async function render() {
 }
 
 window.addEventListener('hashchange', () => render());
-window.addEventListener('resize', () => initWorld(document.getElementById('world')));
+// 背景固定：resize 不再重排光球（移动端地址栏伸缩会狂触发 resize）
+// 仅同步可视高度，给对话页用
+function syncVisualViewport() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-vh', `${h}px`);
+  // 键盘顶起时，给 compose 留偏移
+  if (vv && document.body.classList.contains('chat-mode')) {
+    const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--kb-offset', `${offset}px`);
+  } else {
+    document.documentElement.style.setProperty('--kb-offset', '0px');
+  }
+}
+window.addEventListener('resize', syncVisualViewport);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncVisualViewport);
+  window.visualViewport.addEventListener('scroll', syncVisualViewport);
+}
+syncVisualViewport();
+initWorld(document.getElementById('world'));
 
 (async () => {
   // 支付回站：?from=pay&order= → 主动向平台查单补开会员

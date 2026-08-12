@@ -55,11 +55,31 @@ body {
   font-family: var(--font);
   color: var(--text);
   background: var(--bg);
+  /* 背景层固定在 .world，页面滚动不带动背景 */
+  background-attachment: fixed;
 }
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
+}
+
+/* 对话页：整页锁死，禁止 body 滚动/翻页感 */
+html.chat-mode,
+body.chat-mode {
+  height: 100%;
+  height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+body.chat-mode #app {
+  height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
+  min-height: 0;
+  overflow: hidden;
 }
 
 a {
@@ -78,7 +98,7 @@ select {
   color: inherit;
 }
 
-/* ---------- Living background ---------- */
+/* ---------- Fixed living background（不随翻页/滚动变化） ---------- */
 
 .world {
   position: fixed;
@@ -87,6 +107,9 @@ select {
   overflow: hidden;
   pointer-events: none;
   background: var(--bg);
+  /* 独立合成层，与内容滚动解耦 */
+  transform: translateZ(0);
+  contain: strict;
 }
 
 .world__base {
@@ -106,10 +129,16 @@ html.dark .world__base {
 .orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(40px);
-  will-change: transform;
-  animation: orb-float var(--dur, 18s) ease-in-out infinite;
+  filter: blur(48px);
+  /* 极慢漂移；翻页不重建，位置固定 */
+  animation: orb-float var(--dur, 32s) ease-in-out infinite;
   animation-delay: var(--delay, 0s);
+  opacity: 0.48;
+}
+@media (prefers-reduced-motion: reduce) {
+  .orb {
+    animation: none;
+  }
 }
 
 .orb--pink {
@@ -212,27 +241,43 @@ html.dark .orb--blue {
   flex: 1;
 }
 
-/* 聊天页：占满视口，输入栏贴底不随消息滚走 */
+/* 聊天页：定死视口，仅消息区滚动，输入框贴底（含移动端 / 安全区 / 键盘） */
 .page.page-chat {
   display: flex;
   flex-direction: column;
   width: min(1120px, 100%);
   max-width: 100%;
-  height: calc(100vh - var(--header-h) - var(--footer-h, 44px));
-  max-height: calc(100dvh - var(--header-h) - var(--footer-h, 44px));
-  padding-top: 0.65rem;
-  padding-bottom: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  padding-top: 0.5rem;
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
   overflow: hidden;
   box-sizing: border-box;
+  /* 键盘顶起时整体上移，输入仍可见 */
+  padding-bottom: calc(
+    max(0.35rem, env(safe-area-inset-bottom, 0px)) + var(--kb-offset, 0px)
+  );
 }
 .page.page-chat > .page-back {
   flex-shrink: 0;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.25rem;
 }
 .page.page-chat > .chat-layout {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  height: auto;
+  height: 100%;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0.5rem;
+}
+body.chat-mode .topbar {
+  flex-shrink: 0;
+  position: relative; /* 对话页顶栏不 sticky，避免双层滚动 */
 }
 
 .site-footer {
@@ -797,9 +842,19 @@ html.dark .lg-surface {
 .chat-layout {
   display: grid;
   grid-template-rows: auto 1fr;
-  height: calc(100vh - var(--header-h) - var(--footer-h, 44px) - 1.25rem);
   min-height: 0;
+  height: 100%;
   gap: 0.65rem;
+  overflow: hidden;
+}
+.page.page-chat .chat-layout > .section-head {
+  flex-shrink: 0;
+  margin: 0 !important;
+}
+.page.page-chat .ws-shell {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .ws-shell {
@@ -880,10 +935,12 @@ html.dark .lg-surface {
 .ws-main {
   grid-area: main;
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   min-width: 0;
+  height: 100%;
   gap: 0.55rem;
+  overflow: hidden;
 }
 
 .ws-editor {
@@ -974,23 +1031,43 @@ html.dark .lg-surface {
   display: block;
 }
 
-/* merge modal */
+/* 全局弹层：必须高于玻璃卡片 stacking（isolation:isolate），挂 body */
+#aibridge-modal-host {
+  position: relative;
+  z-index: 1000;
+  pointer-events: none;
+}
+#aibridge-modal-host:empty {
+  display: none;
+}
+#aibridge-modal-host .modal-mask {
+  pointer-events: auto;
+}
+
+/* merge / pick-project modal */
 .modal-mask {
   position: fixed;
   inset: 0;
-  z-index: 80;
-  background: rgba(15, 20, 35, 0.45);
+  z-index: 1000;
+  background: rgba(15, 20, 35, 0.5);
   display: grid;
   place-items: center;
   padding: 1rem;
+  /* 防止被 transform/filter 祖先裁切；host 在 body 时更稳 */
+  isolation: isolate;
 }
 .modal-card {
+  position: relative;
+  z-index: 1;
   width: min(440px, 100%);
   border-radius: 18px;
   background: var(--bg);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow);
+  box-shadow: 0 24px 64px rgba(15, 20, 35, 0.28), var(--shadow);
   padding: 1.25rem 1.3rem;
+  pointer-events: auto;
+  max-height: min(85vh, 640px);
+  overflow: auto;
 }
 .modal-card h3 {
   margin: 0 0 0.5rem;
@@ -1007,6 +1084,72 @@ html.dark .lg-surface {
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: flex-end;
+  margin-top: 1rem;
+  position: relative;
+  z-index: 2;
+}
+
+/* 项目点选列表（替代原生 select，避免下拉被卡片挡住） */
+.project-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: min(46vh, 320px);
+  overflow: auto;
+  padding: 0.15rem;
+  position: relative;
+  z-index: 2;
+}
+.project-pick-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 88%, var(--accent-soft, #dbeafe));
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+.project-pick-item:hover {
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft, #dbeafe) 65%, var(--bg));
+}
+.project-pick-item.is-selected {
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 28%, transparent);
+  background: color-mix(in srgb, var(--accent-soft, #dbeafe) 80%, var(--bg));
+}
+.project-pick-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.project-pick-tag {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 70%, #fff);
+}
+html.dark .project-pick-item {
+  background: color-mix(in srgb, var(--bg-elevated, #1a1f2e) 90%, #fff);
+}
+html.dark .project-pick-item.is-selected {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 18%, var(--bg-elevated, #1a1f2e));
 }
 
 /* admin table */
@@ -1059,11 +1202,17 @@ html.dark .lg-surface {
 }
 
 .chat-log {
-  overflow: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
-  padding: 0.25rem;
+  padding: 0.25rem 0.15rem 0.5rem;
+  /* 仅此处可滚动，外层页面不可滚 */
+  touch-action: pan-y;
 }
 
 .bubble {
@@ -1117,27 +1266,80 @@ html.dark .msg-md pre {
   gap: 0.5rem;
   align-items: flex-end;
   flex-shrink: 0;
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  padding: 0.45rem 0 0.15rem;
+  position: relative;
+  z-index: 6;
+  margin: 0;
+  padding: 0.5rem 0 0.2rem;
+  /* 贴底：grid 最后一行，不随消息列表滚动 */
   background: linear-gradient(
     180deg,
-    transparent 0%,
-    color-mix(in srgb, var(--bg) 88%, transparent) 28%,
+    color-mix(in srgb, var(--bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 92%, transparent) 35%,
     var(--bg) 100%
   );
 }
 .chat-compose textarea {
   flex: 1;
-  min-height: 52px;
-  max-height: 160px;
-  resize: vertical;
+  min-height: 48px;
+  max-height: min(28vh, 140px);
+  resize: none;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 0.7rem 0.85rem;
   background: var(--bg-elevated);
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 16px; /* iOS 避免 focus 缩放 */
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+.chat-compose .btn {
+  flex-shrink: 0;
+  min-height: 48px;
+  padding-left: 1.1rem;
+  padding-right: 1.1rem;
+}
+
+/* 窄屏对话：单列、输入区全宽、文件/编辑器上下叠 */
+@media (max-width: 720px) {
+  .page.page-chat {
+    padding-top: 0.35rem;
+    width: 100%;
+  }
+  .page.page-chat .section-head {
+    gap: 0.4rem;
+  }
+  .page.page-chat .section-head h2 {
+    font-size: 1rem !important;
+  }
+  .page.page-chat .ws-shell.files-open:not(.split),
+  .page.page-chat .ws-shell.split:not(.files-open),
+  .page.page-chat .ws-shell.files-open.split {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'files'
+      'main'
+      'editor';
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .page.page-chat .ws-shell.files-open .ws-files {
+    max-height: 28vh;
+  }
+  .page.page-chat .ws-shell.split .ws-editor {
+    max-height: 36vh;
+  }
+  .chat-compose {
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+  }
+  .chat-compose textarea {
+    min-height: 44px;
+    max-height: 22vh;
+  }
+  .bubble {
+    max-width: 96%;
+    font-size: 0.9rem;
+  }
 }
 
 /* Pricing — 卡片贴合内容宽度，不拉成整行空壳 */
